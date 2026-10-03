@@ -71,7 +71,7 @@ func TestMain(m *testing.M) {
 	if err := (&DatabaseReconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
-		Recorder:  mgr.GetEventRecorderFor("zabbix-operator"),
+		Recorder:  mgr.GetEventRecorder("zabbix-operator"),
 	}).SetupWithManager(mgr); err != nil {
 		fmt.Fprintln(os.Stderr, "setting up controller:", err)
 		os.Exit(1)

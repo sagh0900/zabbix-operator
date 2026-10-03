@@ -82,7 +82,7 @@ func main() {
 	if err := (&controller.DatabaseReconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
-		Recorder:  mgr.GetEventRecorderFor("zabbix-operator"),
+		Recorder:  mgr.GetEventRecorder("zabbix-operator"),
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to set up controller", "controller", "ZabbixDatabase")
 		os.Exit(1)
