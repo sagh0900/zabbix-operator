@@ -10,7 +10,8 @@ ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
       -ldflags="-s -w \
         -X github.com/sagh0900/zabbix-operator/internal/version.Version=${VERSION} \
         -X github.com/sagh0900/zabbix-operator/internal/version.GitCommit=${GIT_COMMIT} \
