@@ -29,6 +29,9 @@ spec:
     - jsonPath: .status.activeServer.pod
       name: Active
       type: string
+    - jsonPath: .status.phaseReason
+      name: Reason
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -564,6 +567,11 @@ spec:
                       description: Affinity of the pods.
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
+                    enabled:
+                      default: true
+                      description: Enabled runs the proxy. Disabling keeps its settings
+                        in the spec.
+                      type: boolean
                     env:
                       description: |-
                         Env adds environment variables to the main container. Variables the operator
@@ -1708,6 +1716,10 @@ spec:
                     description: Affinity of the pods.
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
+                  enabled:
+                    default: true
+                    description: Enabled runs the frontend.
+                    type: boolean
                   env:
                     description: |-
                       Env adds environment variables to the main container. Variables the operator
@@ -2040,10 +2052,10 @@ spec:
                     type: string
                   replicas:
                     default: 1
-                    description: Replicas of the frontend; 0 disables it.
+                    description: Replicas of the frontend.
                     format: int32
                     maximum: 20
-                    minimum: 0
+                    minimum: 1
                     type: integer
                   resources:
                     description: Resources of the main container.
@@ -2301,6 +2313,10 @@ spec:
                     description: Affinity of the pods.
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
+                  enabled:
+                    default: true
+                    description: Enabled runs the web service.
+                    type: boolean
                   env:
                     description: |-
                       Env adds environment variables to the main container. Variables the operator
@@ -2633,10 +2649,10 @@ spec:
                     type: string
                   replicas:
                     default: 1
-                    description: Replicas of the web service; 0 disables it.
+                    description: Replicas of the web service.
                     format: int32
                     maximum: 20
-                    minimum: 0
+                    minimum: 1
                     type: integer
                   resources:
                     description: Resources of the main container.
@@ -3008,6 +3024,11 @@ spec:
                 - Upgrading
                 - Degraded
                 - Blocked
+                type: string
+              phaseReason:
+                description: |-
+                  PhaseReason explains the phase in one line, for example what an upgrade or a
+                  rollout is waiting for.
                 type: string
               runningVersion:
                 description: RunningVersion is the Zabbix version the database schema

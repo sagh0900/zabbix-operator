@@ -56,3 +56,13 @@ func TestOpaqueTypesRoundTrip(t *testing.T) {
 		t.Fatal("DeepCopy shares memory with the original")
 	}
 }
+
+func TestIsEnabledDefaultsToTrue(t *testing.T) {
+	no := false
+	if !(&WebSpec{}).IsEnabled() || !(&WebServiceSpec{}).IsEnabled() || !(&ProxySpec{}).IsEnabled() {
+		t.Error("unset Enabled must mean enabled")
+	}
+	if (&WebSpec{Enabled: &no}).IsEnabled() || (&WebServiceSpec{Enabled: &no}).IsEnabled() || (&ProxySpec{Enabled: &no}).IsEnabled() {
+		t.Error("Enabled=false must disable")
+	}
+}

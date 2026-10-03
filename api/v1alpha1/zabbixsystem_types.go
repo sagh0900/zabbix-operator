@@ -139,12 +139,17 @@ type ServerSpec struct {
 type WebSpec struct {
 	PodSettings `json:",inline"`
 
-	// Replicas of the frontend; 0 disables it.
-	// +kubebuilder:validation:Minimum=0
+	// Enabled runs the frontend.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Replicas of the frontend.
+	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=20
 	// +kubebuilder:default=1
 	// +optional
-	Replicas *int32 `json:"replicas,omitempty"`
+	Replicas int32 `json:"replicas,omitempty"`
 
 	// Service of the frontend, port 80 by default.
 	// +optional
@@ -159,12 +164,17 @@ type WebSpec struct {
 type WebServiceSpec struct {
 	PodSettings `json:",inline"`
 
-	// Replicas of the web service; 0 disables it.
-	// +kubebuilder:validation:Minimum=0
+	// Enabled runs the web service.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Replicas of the web service.
+	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=20
 	// +kubebuilder:default=1
 	// +optional
-	Replicas *int32 `json:"replicas,omitempty"`
+	Replicas int32 `json:"replicas,omitempty"`
 
 	// Service of the web service, port 10053 by default.
 	// +optional
@@ -193,6 +203,11 @@ type ProxySpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=50
 	Name string `json:"name"`
+
+	// Enabled runs the proxy. Disabling keeps its settings in the spec.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// Mode of the proxy.
 	// +kubebuilder:default=active
@@ -251,6 +266,11 @@ type ZabbixSystemStatus struct {
 	// +optional
 	Phase SystemPhase `json:"phase,omitempty"`
 
+	// PhaseReason explains the phase in one line, for example what an upgrade or a
+	// rollout is waiting for.
+	// +optional
+	PhaseReason string `json:"phaseReason,omitempty"`
+
 	// RunningVersion is the Zabbix version the database schema and server run.
 	// +optional
 	RunningVersion string `json:"runningVersion,omitempty"`
@@ -295,6 +315,7 @@ type ComponentStatus struct {
 // +kubebuilder:printcolumn:name="Running",type=string,JSONPath=`.status.runningVersion`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Active",type=string,JSONPath=`.status.activeServer.pod`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.phaseReason`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type ZabbixSystem struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -315,3 +336,12 @@ type ZabbixSystemList struct {
 func init() {
 	knownTypes = append(knownTypes, &ZabbixSystem{}, &ZabbixSystemList{})
 }
+
+// IsEnabled reports whether the frontend runs.
+func (w *WebSpec) IsEnabled() bool { return w.Enabled == nil || *w.Enabled }
+
+// IsEnabled reports whether the web service runs.
+func (w *WebServiceSpec) IsEnabled() bool { return w.Enabled == nil || *w.Enabled }
+
+// IsEnabled reports whether the proxy runs.
+func (p *ProxySpec) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
