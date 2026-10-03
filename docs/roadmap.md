@@ -10,10 +10,10 @@ build, pass tests and leave `main` releasable. Remove this file once v0.1.0 is r
 | 1 | `ci/pipeline` | GitHub Actions: lint, tests and a multi-arch image build on every pull request; on a `v*` tag, push the image to ghcr.io and publish a GitHub release |
 | 2 | `feat/database` | `ZabbixDatabase` API and controller, envtest CNPG CRDs, `config/` manifests, `install.yaml` attached to releases |
 | 3 | `feat/metrics` | Secure metrics endpoint and Service, database metrics, `config/monitoring` (ServiceMonitor, PrometheusRule, dashboard), `monitoring.yaml` and `dashboard.json` release assets |
-| 4 | `feat/suite-api` | `ZabbixSuite` API: shared pod, service and ingress settings, CEL validation (version pattern, supported lines, no downgrade) |
+| 4 | `feat/system-api` | `ZabbixSystem` API: shared pod, service and ingress settings, CEL validation (version pattern, supported lines, no downgrade) |
 | 5 | `feat/podset` | `internal/podset`: render, hash, create, replace one at a time, recreate lost pods, conflict detection |
 | 6 | `feat/jobs` | Job subcommands `precheck`, `ha-reset`, `ha-gc` in the manager binary |
-| 7 | `feat/suite-install` | Suite controller: fresh install, server HA with readiness routing, web, web service, Services, Ingresses, `ha_node` GC |
+| 7 | `feat/system-install` | System controller: fresh install, server HA with readiness routing, web, web service, Services, Ingresses, `ha_node` GC |
 | 8 | `feat/upgrades` | Patch and major upgrades, PostgreSQL version gate, backup gate, database-availability handling |
 | 9 | `feat/proxies-agents` | In-cluster proxies, agent DaemonSet |
 | 10 | `feat/proxy-registration` | Zabbix API client and optional proxy registration from a ConfigMap |
@@ -38,7 +38,7 @@ Release **v0.1.0** after PR 12.
 **envtest (every pull request)**
 - Fresh install: standalone first, then HA scale-out.
 - Lost pod recreated with the same name; template change rolls one pod at a time.
-- Conflict with a pre-existing Service or Pod not owned by the suite.
+- Conflict with a pre-existing Service or Pod not owned by the system.
 - Database not ready: nothing stops, nothing starts; recovery without manual action.
 - Upgrade blocked by PostgreSQL version, then resumed after the version changes.
 - Upgrade state survives an operator restart at every phase.
