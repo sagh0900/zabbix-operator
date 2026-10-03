@@ -3022,6 +3022,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastHANodeGCTime:
+                description: LastHANodeGCTime is when stale ha_node rows were last
+                  removed successfully.
+                format: date-time
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the generation the status was computed
                   for.

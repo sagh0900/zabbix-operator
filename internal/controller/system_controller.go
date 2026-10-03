@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -46,6 +47,7 @@ import (
 
 	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
 	"github.com/sagh0900/zabbix-operator/internal/jobs"
+	"github.com/sagh0900/zabbix-operator/internal/metrics"
 	"github.com/sagh0900/zabbix-operator/internal/podset"
 	"github.com/sagh0900/zabbix-operator/internal/system"
 	"github.com/sagh0900/zabbix-operator/internal/zabbix"
@@ -59,6 +61,11 @@ const (
 	// activeCheckInterval is how often the active server node is re-checked, which bounds
 	// how long the server Service keeps pointing at a node that stepped down.
 	activeCheckInterval = 2 * time.Second
+
+	// haNodeGCInterval is how often stale ha_node rows are removed while the system runs,
+	// and haNodeGCStaleSeconds how long a row must have gone without a heartbeat.
+	haNodeGCInterval     = 5 * time.Minute
+	haNodeGCStaleSeconds = 120
 )
 
 // SystemReconciler runs a ZabbixSystem: it installs Zabbix, keeps server, frontend and
@@ -72,6 +79,12 @@ type SystemReconciler struct {
 	OperatorImage string
 	// ActiveProbe finds the active server node; nil means system.TCPActiveProbe.
 	ActiveProbe system.ActiveProbe
+
+	// lastActive remembers the last active server pod per system ("namespace/name"), so a
+	// failover is counted even when no node is active in between.
+	lastActive sync.Map
+	// countedJobs remembers finished Jobs (by UID) already counted in metrics.
+	countedJobs sync.Map
 	// Now returns the current time; tests replace it.
 	Now func() time.Time
 }
@@ -117,19 +130,26 @@ type observation struct {
 	running    string // RunningVersion to record
 	webReady   bool
 	webEnabled bool
+	lastGC     *metav1.Time // LastHANodeGCTime to record
+	serverPods []string     // names of live server pods
 }
 
 // Reconcile moves one ZabbixSystem one step towards its spec.
 func (r *SystemReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	sys := &zabbixv1alpha1.ZabbixSystem{}
 	if err := r.Get(ctx, req.NamespacedName, sys); err != nil {
+		if apierrors.IsNotFound(err) {
+			metrics.DeleteSystem(req.Namespace, req.Name)
+			r.lastActive.Delete(req.String())
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	obs := &observation{running: sys.Status.RunningVersion, webEnabled: sys.Spec.Web.IsEnabled()}
+	obs := &observation{running: sys.Status.RunningVersion, webEnabled: sys.Spec.Web.IsEnabled(), lastGC: sys.Status.LastHANodeGCTime}
 	requeue, err := r.reconcileSystem(ctx, sys, obs)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	r.recordMetrics(sys, obs)
 	if err := r.updateStatus(ctx, sys, obs); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -174,6 +194,9 @@ func (r *SystemReconciler) reconcileSystem(ctx context.Context, sys *zabbixv1alp
 		return r.install(ctx, sys, db, target, hold, obs)
 	case sys.Spec.Version:
 		requeue, _, err := r.converge(ctx, sys, db, running, running, hold, obs)
+		if err == nil && obs.phase == zabbixv1alpha1.PhaseRunning {
+			err = r.collectHANodes(ctx, sys, db, obs)
+		}
 		// After the servers of an upgrade, the frontend and web service still roll; the
 		// upgrade is reported until every component has settled.
 		if sys.Status.Phase == zabbixv1alpha1.PhaseUpgrading && hold == "" &&
@@ -311,6 +334,9 @@ func (r *SystemReconciler) converge(ctx context.Context, sys *zabbixv1alpha1.Zab
 	var members []podset.Member
 	for i := 0; i < int(sys.Spec.ServerReplicas()); i++ {
 		name := system.PodName(sys, system.Server, i)
+		if p, ok := pods[name]; ok && p.DeletionTimestamp == nil {
+			obs.serverPods = append(obs.serverPods, name)
+		}
 		m := podset.Member{Template: system.ServerPod(in, name, false), LiveLabels: map[string]string{system.LabelRole: system.RoleStandby}}
 		if p, ok := pods[name]; ok && r.isActive(ctx, p) {
 			m.Order, m.LiveLabels[system.LabelRole] = 1, system.RoleActive
@@ -390,10 +416,76 @@ func (r *SystemReconciler) statelessSet(ctx context.Context, sys *zabbixv1alpha1
 func (r *SystemReconciler) podsetReconcile(ctx context.Context, sys *zabbixv1alpha1.ZabbixSystem, component string,
 	members []podset.Member, healthy func(*corev1.Pod) bool, hold string) (podset.Status, error) {
 	m := &podset.Manager{Client: r.Client, Scheme: r.Scheme}
-	return m.Reconcile(ctx, podset.Set{
+	st, err := m.Reconcile(ctx, podset.Set{
 		Owner: sys, System: sys.Name, Component: component, Members: members,
 		Healthy: healthy, Hold: hold, DisruptionBudget: component != system.ServerInit,
 	})
+	for _, d := range st.Deleted {
+		metrics.PodReplacements.WithLabelValues(sys.Namespace, sys.Name, component, string(d.Reason)).Inc()
+	}
+	return st, err
+}
+
+// collectHANodes runs ha-gc every haNodeGCInterval while the system runs, keeping the live
+// server pods and removing rows that have not heartbeated for haNodeGCStaleSeconds.
+func (r *SystemReconciler) collectHANodes(ctx context.Context, sys *zabbixv1alpha1.ZabbixSystem,
+	db *zabbixv1alpha1.ZabbixDatabase, obs *observation) error {
+	now := r.now()
+	if last := sys.Status.LastHANodeGCTime; last != nil && now.Sub(last.Time) < haNodeGCInterval {
+		return nil
+	}
+	res, err := r.runJob(ctx, jobs.Spec{
+		Owner: sys, System: sys.Name, Command: jobs.CommandHAGC,
+		Args: []string{
+			"--keep=" + strings.Join(obs.serverPods, ","),
+			fmt.Sprintf("--stale-seconds=%d", haNodeGCStaleSeconds),
+		},
+		Image: r.OperatorImage, Database: db, Host: db.DirectHostOrDefault(),
+		RunID: fmt.Sprint(now.Unix() / int64(haNodeGCInterval/time.Second)),
+	})
+	if err != nil || res == nil {
+		return err
+	}
+	if !res.OK {
+		r.event(sys, corev1.EventTypeWarning, "HANodeGCFailed", res.Message)
+		return nil
+	}
+	t := metav1.NewTime(now)
+	obs.lastGC = &t
+	metrics.HANodeGCRowsDeleted.WithLabelValues(sys.Namespace, sys.Name).Add(float64(res.Deleted))
+	if res.Deleted > 0 {
+		r.event(sys, corev1.EventTypeNormal, "HANodesRemoved", res.Message)
+	}
+	return nil
+}
+
+// recordMetrics exports what the pass observed.
+func (r *SystemReconciler) recordMetrics(sys *zabbixv1alpha1.ZabbixSystem, obs *observation) {
+	ns, name := sys.Namespace, sys.Name
+	metrics.SetSystemPhase(ns, name, string(obs.phase))
+	metrics.SetSystemInfo(ns, name, sys.Spec.Version, obs.running)
+	metrics.SetUpgradeBlocked(ns, name, obs.blocked)
+	upgrading := 0.0
+	if obs.phase == zabbixv1alpha1.PhaseUpgrading || (obs.running != "" && obs.running != sys.Spec.Version) {
+		upgrading = 1
+	}
+	metrics.UpgradeInProgress.WithLabelValues(ns, name).Set(upgrading)
+	metrics.ServerActiveNodes.WithLabelValues(ns, name).Set(float64(obs.activeN))
+	metrics.ServerFailovers.WithLabelValues(ns, name)
+	for _, c := range obs.components {
+		metrics.ComponentPodsDesired.WithLabelValues(ns, name, c.Name).Set(float64(c.Desired))
+		metrics.ComponentPodsReady.WithLabelValues(ns, name, c.Name).Set(float64(c.Ready))
+	}
+	if obs.lastGC != nil {
+		metrics.HANodeGCLastSuccess.WithLabelValues(ns, name).Set(float64(obs.lastGC.Unix()))
+	}
+	if obs.active != nil {
+		key := ns + "/" + name
+		if prev, ok := r.lastActive.Load(key); ok && prev.(string) != obs.active.Name {
+			metrics.ServerFailovers.WithLabelValues(ns, name).Inc()
+		}
+		r.lastActive.Store(key, obs.active.Name)
+	}
 }
 
 // observeOnly records the state of existing servers without changing anything.
@@ -556,6 +648,7 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 		r.event(sys, corev1.EventTypeWarning, obs.blocked, obs.reason)
 	}
 	st.Phase, st.PhaseReason, st.RunningVersion = obs.phase, obs.reason, obs.running
+	st.LastHANodeGCTime = obs.lastGC
 	if obs.components != nil {
 		st.Components = obs.components
 	}

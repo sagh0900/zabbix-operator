@@ -511,7 +511,7 @@ All series carry `namespace` and the owning resource name (`database` or `system
 | `zabbix_operator_system_info` | gauge | Always 1; labels `version` and `running_version` |
 | `zabbix_operator_component_pods_desired` | gauge | Desired pods per `component` (`server`, `web`, `webservice`, `proxy/<name>`) |
 | `zabbix_operator_component_pods_ready` | gauge | Ready pods per `component` (server: running pods, since standby nodes are never Ready) |
-| `zabbix_operator_pod_replacements_total` | counter | Pods the operator recreated, per `component` and `reason` (`lost`, `evicted`, `rollout`) |
+| `zabbix_operator_pod_replacements_total` | counter | Pods the operator deleted, per `component` and `reason` (`rollout`, `failed`, `scaledown`) |
 | `zabbix_operator_server_active_nodes` | gauge | Server pods currently routed as active (expected 1) |
 | `zabbix_operator_server_failovers_total` | counter | Changes of the active server pod |
 | `zabbix_operator_upgrade_in_progress` | gauge | 1 while an upgrade runs |
@@ -535,10 +535,10 @@ are exported as well.
 | operator | `ZabbixOperatorReconcileErrors` | Reconcile errors persist for 15m |
 | database | `ZabbixDatabaseNotReady` | `database_ready == 0` for 5m (critical after 15m) |
 | database | `ZabbixDatabasePrimaryFlapping` | `PrimaryStable` False for 10m |
-| server | `ZabbixServerNoActiveNode` | `server_active_nodes == 0` for 2m (critical) |
+| server | `ZabbixServerNoActiveNode` | `server_active_nodes == 0` for 2m while Running or Degraded (critical) |
 | server | `ZabbixServerFailoverStorm` | More than 3 failovers in 30m |
 | workloads | `ZabbixComponentDegraded` | Ready pods below desired for 10m |
-| workloads | `ZabbixPodReplacementsHigh` | More than 5 replacements of a component in 30m |
+| workloads | `ZabbixPodReplacementsHigh` | More than 5 failed Pods of a component replaced in 30m |
 | lifecycle | `ZabbixUpgradeBlocked` | An upgrade is blocked for 30m (with the reason) |
 | lifecycle | `ZabbixUpgradeStuck` | An upgrade runs for longer than 2h |
 | lifecycle | `ZabbixOperatorJobFailing` | A Job failed twice in 1h |

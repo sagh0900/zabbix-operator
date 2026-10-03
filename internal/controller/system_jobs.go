@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/sagh0900/zabbix-operator/internal/jobs"
+	"github.com/sagh0900/zabbix-operator/internal/metrics"
 )
 
 // retryFailedJobAfter is how long a failed Job stays before it is deleted and run again,
@@ -59,6 +60,15 @@ func (r *SystemReconciler) runJob(ctx context.Context, spec jobs.Spec) (*jobs.Re
 	}
 	if failed && res == nil {
 		res = &jobs.Result{Command: spec.Command, Reason: "JobFailed", Message: "the " + spec.Command + " Job failed without a result"}
+	}
+	if res != nil {
+		if _, counted := r.countedJobs.LoadOrStore(job.UID, true); !counted {
+			result := "succeeded"
+			if !res.OK {
+				result = "failed"
+			}
+			metrics.JobRuns.WithLabelValues(spec.Owner.GetNamespace(), spec.System, spec.Command, result).Inc()
+		}
 	}
 	if res != nil && !res.OK && r.now().Sub(at) > retryFailedJobAfter {
 		if err := r.Delete(ctx, job, client.PropagationPolicy("Background")); client.IgnoreNotFound(err) != nil {

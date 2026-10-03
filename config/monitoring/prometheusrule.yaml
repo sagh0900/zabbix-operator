@@ -54,3 +54,78 @@ spec:
             summary: Zabbix database primary is flapping
             description: The primary of {{ $labels.namespace }}/{{ $labels.database }} keeps changing.
             runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabaseprimaryflapping
+    - name: zabbix-operator.server
+      rules:
+        - alert: ZabbixServerNoActiveNode
+          expr: (zabbix_operator_server_active_nodes == 0) and on (namespace, system) (zabbix_operator_system_phase{phase=~"Running|Degraded"} == 1)
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: No active Zabbix server node
+            description: ZabbixSystem {{ $labels.namespace }}/{{ $labels.system }} has had no active server node for 2 minutes; proxies and agents cannot deliver data.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixservernoactivenode
+        - alert: ZabbixServerFailoverStorm
+          expr: increase(zabbix_operator_server_failovers_total[30m]) > 3
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix server keeps failing over
+            description: The active server of {{ $labels.namespace }}/{{ $labels.system }} changed more than 3 times in 30 minutes.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixserverfailoverstorm
+    - name: zabbix-operator.workloads
+      rules:
+        - alert: ZabbixComponentDegraded
+          expr: zabbix_operator_component_pods_ready < zabbix_operator_component_pods_desired
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix component has fewer ready pods than desired
+            description: Component {{ $labels.component }} of {{ $labels.namespace }}/{{ $labels.system }} has had fewer ready pods than desired for 10 minutes.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixcomponentdegraded
+        - alert: ZabbixPodReplacementsHigh
+          expr: increase(zabbix_operator_pod_replacements_total{reason="failed"}[30m]) > 5
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix pods keep failing
+            description: More than 5 failed {{ $labels.component }} pods of {{ $labels.namespace }}/{{ $labels.system }} were replaced in 30 minutes.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixpodreplacementshigh
+    - name: zabbix-operator.lifecycle
+      rules:
+        - alert: ZabbixUpgradeBlocked
+          expr: zabbix_operator_upgrade_blocked == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix install or upgrade is blocked
+            description: ZabbixSystem {{ $labels.namespace }}/{{ $labels.system }} has been blocked for 30 minutes ({{ $labels.reason }}); kubectl get zsys shows why.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixupgradeblocked
+        - alert: ZabbixUpgradeStuck
+          expr: zabbix_operator_upgrade_in_progress == 1
+          for: 2h
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix upgrade is taking long
+            description: ZabbixSystem {{ $labels.namespace }}/{{ $labels.system }} has been upgrading for more than 2 hours.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixupgradestuck
+        - alert: ZabbixOperatorJobFailing
+          expr: increase(zabbix_operator_job_runs_total{result="failed"}[1h]) >= 2
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix operator Job keeps failing
+            description: The {{ $labels.job }} Job of {{ $labels.namespace }}/{{ $labels.system }} failed at least twice in an hour.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatorjobfailing
+        - alert: ZabbixHANodeGCStale
+          expr: (time() - zabbix_operator_hanode_gc_last_success_timestamp_seconds > 1800) and on (namespace, system) (zabbix_operator_system_phase{phase="Running"} == 1)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Stale ha_node rows are not being removed
+            description: ha-gc has not succeeded for 30 minutes on {{ $labels.namespace }}/{{ $labels.system }}.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixhanodegcstale

@@ -28,6 +28,8 @@ const (
 
 	labelNamespace = "namespace"
 	labelDatabase  = "database"
+	labelSystem    = "system"
+	labelComponent = "component"
 )
 
 var (
@@ -53,8 +55,130 @@ var (
 	}, []string{labelNamespace, labelDatabase})
 )
 
+var (
+	// SystemPhase is 1 for the current phase of a ZabbixSystem.
+	SystemPhase = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "system_phase",
+		Help: "1 for the current phase of the ZabbixSystem.",
+	}, []string{labelNamespace, labelSystem, "phase"})
+
+	// SystemInfo carries the desired and running Zabbix versions.
+	SystemInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "system_info",
+		Help: "Always 1; labels carry the desired and running Zabbix versions.",
+	}, []string{labelNamespace, labelSystem, "version", "running_version"})
+
+	// ComponentPodsDesired is the number of pods a component should have.
+	ComponentPodsDesired = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "component_pods_desired",
+		Help: "Pods a component of the ZabbixSystem should have.",
+	}, []string{labelNamespace, labelSystem, labelComponent})
+
+	// ComponentPodsReady is the number of a component's pods that are ready.
+	ComponentPodsReady = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "component_pods_ready",
+		Help: "Pods of a component of the ZabbixSystem that are ready.",
+	}, []string{labelNamespace, labelSystem, labelComponent})
+
+	// PodReplacements counts pods the operator deleted to replace them.
+	PodReplacements = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Name: "pod_replacements_total",
+		Help: "Pods the operator deleted, by reason: rollout, failed or scaledown.",
+	}, []string{labelNamespace, labelSystem, labelComponent, "reason"})
+
+	// ServerActiveNodes is the number of server pods accepting trapper connections.
+	ServerActiveNodes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "server_active_nodes",
+		Help: "Server pods that are the active HA node (expected: 1).",
+	}, []string{labelNamespace, labelSystem})
+
+	// ServerFailovers counts changes of the active server pod.
+	ServerFailovers = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Name: "server_failovers_total",
+		Help: "Changes of the active server pod.",
+	}, []string{labelNamespace, labelSystem})
+
+	// UpgradeInProgress is 1 while a version change runs.
+	UpgradeInProgress = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "upgrade_in_progress",
+		Help: "1 while the ZabbixSystem moves to a new version.",
+	}, []string{labelNamespace, labelSystem})
+
+	// UpgradeBlocked is 1 for the reason an install or upgrade is blocked.
+	UpgradeBlocked = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "upgrade_blocked",
+		Help: "1 for the reason the install or upgrade of the ZabbixSystem is blocked.",
+	}, []string{labelNamespace, labelSystem, "reason"})
+
+	// JobRuns counts finished database Jobs.
+	JobRuns = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Name: "job_runs_total",
+		Help: "Finished database Jobs, by command and result (succeeded or failed).",
+	}, []string{labelNamespace, labelSystem, "job", "result"})
+
+	// HANodeGCRowsDeleted counts stale ha_node rows removed.
+	HANodeGCRowsDeleted = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Name: "hanode_gc_rows_deleted_total",
+		Help: "Stale ha_node rows removed by ha-gc.",
+	}, []string{labelNamespace, labelSystem})
+
+	// HANodeGCLastSuccess is the time of the last successful ha-gc run.
+	HANodeGCLastSuccess = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "hanode_gc_last_success_timestamp_seconds",
+		Help: "Unix time of the last successful ha-gc run.",
+	}, []string{labelNamespace, labelSystem})
+)
+
+// systemCollectors are every metric labelled by a ZabbixSystem.
+var systemCollectors = []interface {
+	prometheus.Collector
+	DeletePartialMatch(prometheus.Labels) int
+}{
+	SystemPhase, SystemInfo, ComponentPodsDesired, ComponentPodsReady, PodReplacements, ServerActiveNodes,
+	ServerFailovers, UpgradeInProgress, UpgradeBlocked, JobRuns, HANodeGCRowsDeleted, HANodeGCLastSuccess,
+}
+
 func init() {
 	ctrlmetrics.Registry.MustRegister(DatabaseReady, DatabaseCondition, DatabasePrimaryChanges)
+	for _, c := range systemCollectors {
+		ctrlmetrics.Registry.MustRegister(c)
+	}
+}
+
+// SystemPhases are the phases a ZabbixSystem reports.
+var SystemPhases = []string{"Installing", "Running", "Upgrading", "Degraded", "Blocked"}
+
+// SetSystemPhase sets the phase series so exactly the current phase is 1.
+func SetSystemPhase(ns, name, phase string) {
+	for _, p := range SystemPhases {
+		v := 0.0
+		if p == phase {
+			v = 1
+		}
+		SystemPhase.WithLabelValues(ns, name, p).Set(v)
+	}
+}
+
+// SetSystemInfo replaces the info series of a system.
+func SetSystemInfo(ns, name, version, running string) {
+	SystemInfo.DeletePartialMatch(prometheus.Labels{labelNamespace: ns, labelSystem: name})
+	SystemInfo.WithLabelValues(ns, name, version, running).Set(1)
+}
+
+// SetUpgradeBlocked sets the blocked reason of a system; an empty reason clears it.
+func SetUpgradeBlocked(ns, name, reason string) {
+	UpgradeBlocked.DeletePartialMatch(prometheus.Labels{labelNamespace: ns, labelSystem: name})
+	if reason != "" {
+		UpgradeBlocked.WithLabelValues(ns, name, reason).Set(1)
+	}
+}
+
+// DeleteSystem removes every series of a deleted ZabbixSystem.
+func DeleteSystem(ns, name string) {
+	labels := prometheus.Labels{labelNamespace: ns, labelSystem: name}
+	for _, c := range systemCollectors {
+		c.DeletePartialMatch(labels)
+	}
 }
 
 // conditionStatuses are the values a condition status can take.

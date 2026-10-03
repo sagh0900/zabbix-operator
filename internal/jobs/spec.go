@@ -55,13 +55,15 @@ type Spec struct {
 	// Database is the database to connect to; Host is used (the direct host for schema work).
 	Database *zabbixv1alpha1.ZabbixDatabase
 	Host     string
+	// RunID distinguishes repeated runs with identical arguments, such as periodic ha-gc.
+	RunID string
 }
 
 // Name returns a deterministic Job name: the same inputs always give the same Job, so
 // reconciling is idempotent, and changed inputs give a new Job.
 func Name(s Spec) string {
 	h := sha256.New()
-	for _, part := range append([]string{s.Command, s.Image, s.Host}, s.Args...) {
+	for _, part := range append([]string{s.Command, s.Image, s.Host, s.RunID}, s.Args...) {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}

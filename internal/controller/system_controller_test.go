@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
@@ -39,6 +40,7 @@ import (
 
 	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
 	"github.com/sagh0900/zabbix-operator/internal/jobs"
+	"github.com/sagh0900/zabbix-operator/internal/metrics"
 	"github.com/sagh0900/zabbix-operator/internal/podset"
 	"github.com/sagh0900/zabbix-operator/internal/system"
 	"github.com/sagh0900/zabbix-operator/internal/zabbix"
@@ -699,4 +701,102 @@ func waitEvent(t *testing.T, ns, kind, reason, note string) {
 		}
 		return fmt.Errorf("no %s event %s %q", kind, reason, note)
 	})
+}
+
+// While the system runs, ha-gc keeps the live server pods, records when it last succeeded
+// and does not run again before the interval.
+func TestSystem_HANodeGC(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+
+	job := pendingJob(t, ns, jobs.CommandHAGC)
+	args := strings.Join(job.Spec.Template.Spec.Containers[0].Args, " ")
+	if !strings.Contains(args, "--keep=zabbix-server-0,zabbix-server-1") || !strings.Contains(args, "--stale-seconds=120") {
+		t.Errorf("ha-gc args %q", args)
+	}
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandHAGC, OK: true, Deleted: 3, Message: "deleted 3 stale ha_node rows"})
+	eventually(t, func() error {
+		if getSystem(t, ns).Status.LastHANodeGCTime == nil {
+			return fmt.Errorf("lastHANodeGCTime not recorded")
+		}
+		return nil
+	})
+	waitEvent(t, ns, corev1.EventTypeNormal, "HANodesRemoved", "deleted 3 stale ha_node rows")
+	if got := testutil.ToFloat64(metrics.HANodeGCRowsDeleted.WithLabelValues(ns, "zabbix")); got != 3 {
+		t.Errorf("rows deleted metric %v", got)
+	}
+	if got := testutil.ToFloat64(metrics.JobRuns.WithLabelValues(ns, "zabbix", jobs.CommandHAGC, "succeeded")); got != 1 {
+		t.Errorf("job runs metric %v", got)
+	}
+	time.Sleep(3 * activeCheckInterval)
+	list := &batchv1.JobList{}
+	if err := k8s.List(context.Background(), list, client.InNamespace(ns), client.MatchingLabels{jobs.LabelJob: jobs.CommandHAGC}); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 {
+		t.Errorf("%d ha-gc Jobs, want 1 within the interval", len(list.Items))
+	}
+}
+
+func TestSystem_Metrics(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+	eventually(t, func() error {
+		checks := map[string]float64{
+			"phase Running": testutil.ToFloat64(metrics.SystemPhase.WithLabelValues(ns, "zabbix", "Running")),
+			"active nodes":  testutil.ToFloat64(metrics.ServerActiveNodes.WithLabelValues(ns, "zabbix")),
+			"server ready":  testutil.ToFloat64(metrics.ComponentPodsReady.WithLabelValues(ns, "zabbix", "server")),
+			"web desired":   testutil.ToFloat64(metrics.ComponentPodsDesired.WithLabelValues(ns, "zabbix", "web")),
+		}
+		want := map[string]float64{"phase Running": 1, "active nodes": 1, "server ready": 2, "web desired": 1}
+		for k, v := range checks {
+			if v != want[k] {
+				return fmt.Errorf("%s = %v, want %v", k, v, want[k])
+			}
+		}
+		return nil
+	})
+
+	setActive(ns, "")
+	waitPhase(t, ns, zabbixv1alpha1.PhaseDegraded, "No active server node")
+	setActive(ns, "zabbix-server-1")
+	eventually(t, func() error {
+		if got := testutil.ToFloat64(metrics.ServerFailovers.WithLabelValues(ns, "zabbix")); got != 1 {
+			return fmt.Errorf("failovers %v, want 1 (counted across the no-active gap)", got)
+		}
+		return nil
+	})
+
+	if err := k8s.Delete(context.Background(), getSystem(t, ns)); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() error {
+		if v := testutil.ToFloat64(metrics.ServerActiveNodes.WithLabelValues(ns, "zabbix")); v != 0 {
+			return fmt.Errorf("series kept after deletion")
+		}
+		metrics.ServerActiveNodes.DeleteLabelValues(ns, "zabbix") // the read above recreated it
+		return nil
+	})
+}
+
+// pendingJob waits for an unfinished operator Job running command.
+func pendingJob(t *testing.T, ns, command string) *batchv1.Job {
+	t.Helper()
+	job := &batchv1.Job{}
+	eventually(t, func() error {
+		list := &batchv1.JobList{}
+		if err := k8s.List(context.Background(), list, client.InNamespace(ns), client.MatchingLabels{jobs.LabelJob: command}); err != nil {
+			return err
+		}
+		for i := range list.Items {
+			if len(list.Items[i].Status.Conditions) == 0 {
+				*job = list.Items[i]
+				return nil
+			}
+		}
+		return fmt.Errorf("no pending %s Job", command)
+	})
+	return job
 }
