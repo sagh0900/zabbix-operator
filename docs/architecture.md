@@ -507,6 +507,27 @@ Any well-formed version is accepted by the API. A version older than the running
 the target; setting `spec.version` back withdraws the request, including a blocked upgrade
 that never started.
 
+### Suspend
+
+`spec.suspend: true` stops a whole Zabbix installation on purpose, the way CloudNativePG
+hibernation stops a cluster, for maintenance windows that need Zabbix fully off (for
+example, to keep every client away from the database). Like `suspend` on a CronJob, it is
+a spec field, so it can be set from Git.
+
+- Pods stop in a safe order: frontend and web service, proxies, standby servers, then the
+  active server, each shutting down cleanly so its `ha_node` row is marked stopped. The agent
+  DaemonSet stops too.
+- Everything else stays: the ZabbixSystem, Services, Ingresses, configuration and status.
+  The database is untouched.
+- No Jobs run (no `precheck`, no `ha-gc`), and nothing is recreated or rolled while suspended.
+- Status: phase `Suspended` with the reason, `ServerActive=False` with reason `Suspended`.
+  The `ZabbixServerNoActiveNode` alert does not fire for a suspended system, and the
+  `ZabbixSystemRunning` heartbeat stops, which is the expected signal.
+- A suspend requested during a schema upgrade waits until the schema step has finished; a
+  running schema upgrade is never interrupted.
+- `spec.suspend: false` (or removing it) resumes: the system starts like a running one
+  returning from an outage, servers first, then the frontend and web service.
+
 ### Configuration change
 
 A change to a component's spec changes its Pod template hash and triggers the rolling

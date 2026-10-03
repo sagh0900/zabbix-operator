@@ -16,6 +16,7 @@ build, pass tests and leave `main` releasable. Remove this file once v0.1.0 is r
 | 7 | `feat/system-install` | System controller: fresh install, server HA with readiness routing, web, web service, Services, Ingresses, `ha_node` GC |
 | 8 | `feat/upgrades` | Patch and major upgrades, PostgreSQL version gate, backup gate, database-availability handling |
 | 9 | `feat/proxies-agents` | In-cluster proxies, agent DaemonSet |
+| 9b | `feat/suspend` | `spec.suspend`: CNPG-hibernation-style stop of all Zabbix pods in a safe order, phase `Suspended`, resume |
 | 10 | `feat/proxy-registration` | Zabbix API client and optional proxy registration from a ConfigMap |
 | 11 | `docs/operations` | Install guide, examples, operations and upgrade guides, migration guide from plain manifests |
 | 12 | `test/e2e` | Live-cluster suites below |
@@ -31,6 +32,8 @@ Release **v0.1.0** after PR 12.
 - Pod template hashing, rollout order (standby first, active last), replica computation.
 - Upgrade path validation: patch, major with and without approval, unsupported line,
   downgrade, PostgreSQL too old.
+- Suspend: stop order, nothing recreated while suspended, suspend waits for a running schema
+  step, resume.
 - Flap damping including the return to stable.
 - Env, label and annotation merge with operator-managed keys.
 - Proxy definition parsing and the create/update/prune decision.
