@@ -1,0 +1,8 @@
+# Bind this ClusterRole to the ServiceAccount of the Prometheus that scrapes the operator.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: metrics-reader
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]

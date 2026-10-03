@@ -37,6 +37,7 @@ jobs:
           path: bin
           key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
       - run: make test
+      - run: make test-monitoring
       - name: Check generated files and formatting are committed
         run: git diff --exit-code
 

@@ -20,8 +20,10 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -30,9 +32,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
+	"github.com/sagh0900/zabbix-operator/internal/metrics"
 )
-
-const waitFor = 10 * time.Second
 
 func createSecret(t *testing.T, ns string) *corev1.Secret {
 	t.Helper()
@@ -99,7 +100,7 @@ func createDatabase(t *testing.T, ns string) *zabbixv1alpha1.ZabbixDatabase {
 func waitReady(t *testing.T, ns string, want metav1.ConditionStatus, reason string) *zabbixv1alpha1.ZabbixDatabase {
 	t.Helper()
 	db := &zabbixv1alpha1.ZabbixDatabase{}
-	eventually(t, waitFor, func() error {
+	eventually(t, func() error {
 		if err := k8s.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "zabbix-db"}, db); err != nil {
 			return err
 		}
@@ -123,6 +124,7 @@ func TestDatabase_ReadyWithHealthyCluster(t *testing.T) {
 	if db.Status.CurrentPrimary != primary1 {
 		t.Errorf("CurrentPrimary = %q, want pg-1", db.Status.CurrentPrimary)
 	}
+	waitMetric(t, ns, 1)
 	if db.Spec.Port != 5432 || db.Spec.Database != "zabbix" || db.Spec.CredentialsRef.PasswordKey != "password" {
 		t.Errorf("API defaults not applied: %+v", db.Spec)
 	}
@@ -155,6 +157,9 @@ func TestDatabase_FollowsSwitchover(t *testing.T) {
 	if db.Status.CurrentPrimary != primary2 || db.Status.PrimaryChanges != 1 {
 		t.Errorf("primary %q changes %d, want pg-2 and 1", db.Status.CurrentPrimary, db.Status.PrimaryChanges)
 	}
+	if got := testutil.ToFloat64(metrics.DatabasePrimaryChanges.WithLabelValues(ns, "zabbix-db")); got != 1 {
+		t.Errorf("primary changes metric = %v, want 1", got)
+	}
 }
 
 func TestDatabase_FollowsSecretLifecycle(t *testing.T) {
@@ -169,8 +174,9 @@ func TestDatabase_FollowsSecretLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitReady(t, ns, metav1.ConditionFalse, ReasonSecretNotFound)
+	waitMetric(t, ns, 0)
 
-	eventually(t, waitFor, func() error {
+	eventually(t, func() error {
 		events := &eventsv1.EventList{}
 		if err := k8s.List(context.Background(), events, client.InNamespace(ns)); err != nil {
 			return err
@@ -185,6 +191,64 @@ func TestDatabase_FollowsSecretLifecycle(t *testing.T) {
 
 	createSecret(t, ns)
 	waitReady(t, ns, metav1.ConditionTrue, ReasonReady)
+	waitMetric(t, ns, 1)
+}
+
+func TestDatabase_DeletionRemovesMetrics(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	createSecret(t, ns)
+	createCluster(t, ns)
+	db := createDatabase(t, ns)
+	waitMetric(t, ns, 1)
+
+	if err := k8s.Delete(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() error {
+		if n := seriesCount(ns); n > 0 {
+			return fmt.Errorf("%d database_ready series still exported for %s", n, ns)
+		}
+		return nil
+	})
+}
+
+// seriesCount returns the number of zabbix_operator_database_ready series for namespace ns.
+func seriesCount(ns string) int {
+	ch := make(chan prometheus.Metric, 64)
+	go func() {
+		metrics.DatabaseReady.Collect(ch)
+		close(ch)
+	}()
+	n := 0
+	for m := range ch {
+		var pb dto.Metric
+		if err := m.Write(&pb); err != nil {
+			continue
+		}
+		for _, l := range pb.GetLabel() {
+			if l.GetName() == "namespace" && l.GetValue() == ns {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// waitMetric waits until zabbix_operator_database_ready for zabbix-db in ns equals want.
+// It checks the series exists first, because reading it through WithLabelValues would
+// create it.
+func waitMetric(t *testing.T, ns string, want float64) {
+	t.Helper()
+	eventually(t, func() error {
+		if seriesCount(ns) == 0 {
+			return fmt.Errorf("no database_ready series for %s", ns)
+		}
+		if got := testutil.ToFloat64(metrics.DatabaseReady.WithLabelValues(ns, "zabbix-db")); got != want {
+			return fmt.Errorf("database_ready = %v, want %v", got, want)
+		}
+		return nil
+	})
 }
 
 func TestDatabase_RejectsVerifyWithoutCA(t *testing.T) {

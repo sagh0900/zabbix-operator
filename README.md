@@ -19,6 +19,20 @@ Requires CloudNativePG.
 kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/vX.Y.Z/install.yaml
 ```
 
+## Monitoring
+
+Optional; requires the Prometheus Operator CRDs.
+
+```sh
+kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/vX.Y.Z/monitoring.yaml
+```
+
+It adds a ServiceMonitor, alerting rules ([runbook](docs/alerts.md)) and a Grafana
+dashboard ConfigMap labelled `grafana_dashboard: "1"`. Bind the
+`zabbix-operator-metrics-reader` ClusterRole to your Prometheus ServiceAccount (patch
+`zabbix-operator-metrics-reader-prometheus`) and add the labels your Prometheus selects
+on. `dashboard.json` is also published for other provisioning methods.
+
 ## Build
 
 ```sh

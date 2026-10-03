@@ -35,7 +35,7 @@ spec:
             - --leader-elect
           ports:
             - name: metrics
-              containerPort: 8080
+              containerPort: 8443
             - name: health
               containerPort: 8081
           livenessProbe:

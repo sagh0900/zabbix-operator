@@ -28,12 +28,18 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
 	"github.com/sagh0900/zabbix-operator/internal/controller"
 	"github.com/sagh0900/zabbix-operator/internal/version"
 )
+
+// The metrics endpoint authenticates scrapers with TokenReview and authorises them with
+// SubjectAccessReview.
+// +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 
 var scheme = runtime.NewScheme()
 
@@ -45,11 +51,14 @@ func init() {
 func main() {
 	var (
 		metricsAddr    string
+		metricsSecure  bool
 		probeAddr      string
 		leaderElection bool
 		showVersion    bool
 	)
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Address the metrics endpoint binds to.")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "Address the metrics endpoint binds to; 0 disables it.")
+	flag.BoolVar(&metricsSecure, "metrics-secure", true,
+		"Serve metrics over HTTPS and require an authorised Kubernetes token.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Address the health probe endpoint binds to.")
 	flag.BoolVar(&leaderElection, "leader-elect", true, "Enable leader election so only one manager is active.")
 	flag.BoolVar(&showVersion, "version", false, "Print the version and exit.")
@@ -66,9 +75,14 @@ func main() {
 	log := ctrl.Log.WithName("setup")
 	log.Info("starting", "version", version.String())
 
+	metricsOpts := metricsserver.Options{BindAddress: metricsAddr, SecureServing: metricsSecure}
+	if metricsSecure {
+		metricsOpts.FilterProvider = filters.WithAuthenticationAndAuthorization
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                        scheme,
-		Metrics:                       metricsserver.Options{BindAddress: metricsAddr},
+		Metrics:                       metricsOpts,
 		HealthProbeBindAddress:        probeAddr,
 		LeaderElection:                leaderElection,
 		LeaderElectionID:              "zabbix-operator-leader",

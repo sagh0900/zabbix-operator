@@ -1,0 +1,56 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: rules
+  namespace: system
+spec:
+  groups:
+    - name: zabbix-operator.operator
+      rules:
+        - alert: ZabbixOperatorDown
+          expr: absent(up{job="zabbix-operator-metrics"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Zabbix operator is down
+            description: No zabbix-operator metrics target has been up for 5 minutes.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatordown
+        - alert: ZabbixOperatorReconcileErrors
+          expr: sum by (controller) (rate(controller_runtime_reconcile_errors_total{job="zabbix-operator-metrics"}[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix operator reconcile errors
+            description: Controller {{ $labels.controller }} has failed reconciles for 15 minutes.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatorreconcileerrors
+    - name: zabbix-operator.database
+      rules:
+        - alert: ZabbixDatabaseNotReady
+          expr: zabbix_operator_database_ready == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix database not ready
+            description: ZabbixDatabase {{ $labels.namespace }}/{{ $labels.database }} has not been Ready for 5 minutes.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabasenotready
+        - alert: ZabbixDatabaseNotReady
+          expr: zabbix_operator_database_ready == 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: Zabbix database not ready
+            description: ZabbixDatabase {{ $labels.namespace }}/{{ $labels.database }} has not been Ready for 15 minutes.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabasenotready
+        - alert: ZabbixDatabasePrimaryFlapping
+          expr: zabbix_operator_database_condition{condition="PrimaryStable",status="False"} == 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix database primary is flapping
+            description: The primary of {{ $labels.namespace }}/{{ $labels.database }} keeps changing.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabaseprimaryflapping
