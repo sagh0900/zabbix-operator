@@ -7,10 +7,24 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
   - secrets
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - authentication.k8s.io
@@ -25,12 +39,46 @@ rules:
   verbs:
   - create
 - apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
   - events.k8s.io
   resources:
   - events
   verbs:
   - create
   - patch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - postgresql.cnpg.io
   resources:
@@ -43,6 +91,7 @@ rules:
   - zabbix.io
   resources:
   - zabbixdatabases
+  - zabbixsystems
   verbs:
   - get
   - list
@@ -51,6 +100,7 @@ rules:
   - zabbix.io
   resources:
   - zabbixdatabases/status
+  - zabbixsystems/status
   verbs:
   - get
   - patch

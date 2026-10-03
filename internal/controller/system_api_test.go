@@ -93,8 +93,11 @@ func TestSystemAPI_Defaults(t *testing.T) {
 	if s.Upgrade.RequireBackupWithin == nil || s.Upgrade.RequireBackupWithin.Hours() != 24 {
 		t.Errorf("requireBackupWithin default: %v", s.Upgrade.RequireBackupWithin)
 	}
-	if s.Server.Service.Type != corev1.ServiceTypeClusterIP {
-		t.Errorf("service type default: %q", s.Server.Service.Type)
+	if s.Server.Service.Type != corev1.ServiceTypeClusterIP || s.Web.Service.Type != corev1.ServiceTypeClusterIP {
+		t.Errorf("service type defaults: %q %q", s.Server.Service.Type, s.Web.Service.Type)
+	}
+	if s.Agent.Enabled || s.ProxyRegistration.Enabled {
+		t.Error("agent and proxy registration are off by default")
 	}
 }
 
@@ -124,9 +127,12 @@ func TestSystemAPI_UpgradeDirection(t *testing.T) {
 	if err := k8s.Create(ctx, sys); err != nil {
 		t.Fatal(err)
 	}
+	// Merge patches carry only the change, so they never conflict with the controller's
+	// status updates.
 	set := func(v string) error {
+		before := sys.DeepCopy()
 		sys.Spec.Version = v
-		return k8s.Update(ctx, sys)
+		return k8s.Patch(ctx, sys, client.MergeFrom(before))
 	}
 	reload := func() {
 		if err := k8s.Get(ctx, client.ObjectKeyFromObject(sys), sys); err != nil {
@@ -153,8 +159,9 @@ func TestSystemAPI_DatabaseRefImmutable(t *testing.T) {
 	if err := k8s.Create(ctx, sys); err != nil {
 		t.Fatal(err)
 	}
+	before := sys.DeepCopy()
 	sys.Spec.DatabaseRef.Name = "other"
-	expectRejected(t, k8s.Update(ctx, sys), "immutable")
+	expectRejected(t, k8s.Patch(ctx, sys, client.MergeFrom(before)), "immutable")
 }
 
 func TestSystemAPI_FieldRules(t *testing.T) {
@@ -254,5 +261,30 @@ func TestDocExamplesAreValid(t *testing.T) {
 	}
 	if found < 2 {
 		t.Fatalf("found %d API examples in the architecture document, want at least 2", found)
+	}
+}
+
+// A manifest that leaves sections out entirely (as kubectl sends it) still gets every
+// default: replicas, enabled flags and Service types.
+func TestSystemAPI_DefaultsForOmittedSections(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "zabbix.io/v1alpha1", "kind": "ZabbixSystem",
+		"metadata": map[string]interface{}{"name": "minimal", "namespace": ns},
+		"spec":     map[string]interface{}{"version": "7.0.1", "databaseRef": map[string]interface{}{"name": "zabbix-db"}},
+	}}
+	if err := k8s.Create(context.Background(), obj); err != nil {
+		t.Fatal(err)
+	}
+	sys := &zabbixv1alpha1.ZabbixSystem{}
+	if err := k8s.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "minimal"}, sys); err != nil {
+		t.Fatal(err)
+	}
+	s := sys.Spec
+	if s.Server.Replicas != 2 || s.Web.Replicas != 1 || s.WebService.Replicas != 1 ||
+		!ptr.Deref(s.Web.Enabled, false) || !ptr.Deref(s.WebService.Enabled, false) ||
+		s.Upgrade.RequireBackupWithin == nil || s.Server.Service.Type != corev1.ServiceTypeClusterIP {
+		t.Errorf("omitted sections not defaulted: %+v", s)
 	}
 }

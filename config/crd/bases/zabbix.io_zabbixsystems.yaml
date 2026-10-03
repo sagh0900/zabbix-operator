@@ -63,6 +63,7 @@ spec:
               proxies and agents, on the database referenced by DatabaseRef.
             properties:
               agent:
+                default: {}
                 description: Agent runs Zabbix agent 2 on every eligible node.
                 properties:
                   affinity:
@@ -921,6 +922,7 @@ spec:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
                     service:
+                      default: {}
                       description: Service of a passive proxy, port 10051 by default.
                       properties:
                         annotations:
@@ -1114,6 +1116,7 @@ spec:
                 - name
                 x-kubernetes-list-type: map
               proxyRegistration:
+                default: {}
                 description: ProxyRegistration keeps proxies registered in Zabbix
                   through its API.
                 properties:
@@ -1157,6 +1160,7 @@ spec:
                   rule: '!has(self.enabled) || !self.enabled || (has(self.apiTokenSecretRef)
                     && has(self.configMapRef))'
               server:
+                default: {}
                 description: Server is the Zabbix server, run in native HA mode.
                 properties:
                   affinity:
@@ -1499,6 +1503,7 @@ spec:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                   service:
+                    default: {}
                     description: Service exposes the active node on port 10051.
                     properties:
                       annotations:
@@ -1687,6 +1692,7 @@ spec:
                 description: Timezone (TZ) of all Zabbix containers, for example Europe/Stockholm.
                 type: string
               upgrade:
+                default: {}
                 description: Upgrade controls upgrades between versions.
                 properties:
                   approveMajor:
@@ -1711,6 +1717,7 @@ spec:
                 pattern: ^[1-9][0-9]?\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]*)((alpha|beta|rc)[1-9][0-9]*)?$
                 type: string
               web:
+                default: {}
                 description: Web is the Zabbix frontend.
                 properties:
                   affinity:
@@ -2122,6 +2129,7 @@ spec:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                   service:
+                    default: {}
                     description: Service of the frontend, port 80 by default.
                     properties:
                       annotations:
@@ -2307,6 +2315,7 @@ spec:
                     type: array
                 type: object
               webService:
+                default: {}
                 description: WebService is the Zabbix web service used for scheduled
                   reports.
                 properties:
@@ -2719,6 +2728,7 @@ spec:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                   service:
+                    default: {}
                     description: Service of the web service, port 10053 by default.
                     properties:
                       annotations:

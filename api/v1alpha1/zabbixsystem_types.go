@@ -74,18 +74,22 @@ type ZabbixSystemSpec struct {
 	Timezone string `json:"timezone,omitempty"`
 
 	// Upgrade controls upgrades between versions.
+	// +kubebuilder:default={}
 	// +optional
 	Upgrade UpgradeSettings `json:"upgrade,omitempty"`
 
 	// Server is the Zabbix server, run in native HA mode.
+	// +kubebuilder:default={}
 	// +optional
 	Server ServerSpec `json:"server,omitempty"`
 
 	// Web is the Zabbix frontend.
+	// +kubebuilder:default={}
 	// +optional
 	Web WebSpec `json:"web,omitempty"`
 
 	// WebService is the Zabbix web service used for scheduled reports.
+	// +kubebuilder:default={}
 	// +optional
 	WebService WebServiceSpec `json:"webService,omitempty"`
 
@@ -97,10 +101,12 @@ type ZabbixSystemSpec struct {
 	Proxies []ProxySpec `json:"proxies,omitempty"`
 
 	// Agent runs Zabbix agent 2 on every eligible node.
+	// +kubebuilder:default={}
 	// +optional
 	Agent AgentSpec `json:"agent,omitempty"`
 
 	// ProxyRegistration keeps proxies registered in Zabbix through its API.
+	// +kubebuilder:default={}
 	// +optional
 	ProxyRegistration ProxyRegistrationSpec `json:"proxyRegistration,omitempty"`
 }
@@ -132,6 +138,7 @@ type ServerSpec struct {
 	Replicas int32 `json:"replicas,omitempty"`
 
 	// Service exposes the active node on port 10051.
+	// +kubebuilder:default={}
 	// +optional
 	Service ServiceSettings `json:"service,omitempty"`
 }
@@ -153,6 +160,7 @@ type WebSpec struct {
 	Replicas int32 `json:"replicas,omitempty"`
 
 	// Service of the frontend, port 80 by default.
+	// +kubebuilder:default={}
 	// +optional
 	Service ServiceSettings `json:"service,omitempty"`
 
@@ -178,6 +186,7 @@ type WebServiceSpec struct {
 	Replicas int32 `json:"replicas,omitempty"`
 
 	// Service of the web service, port 10053 by default.
+	// +kubebuilder:default={}
 	// +optional
 	Service ServiceSettings `json:"service,omitempty"`
 
@@ -223,6 +232,7 @@ type ProxySpec struct {
 	Replicas int32 `json:"replicas,omitempty"`
 
 	// Service of a passive proxy, port 10051 by default.
+	// +kubebuilder:default={}
 	// +optional
 	Service ServiceSettings `json:"service,omitempty"`
 }
@@ -346,3 +356,34 @@ func (w *WebServiceSpec) IsEnabled() bool { return w.Enabled == nil || *w.Enable
 
 // IsEnabled reports whether the proxy runs.
 func (p *ProxySpec) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
+
+// Replica counts applied when a spec section is omitted by a client that bypasses API
+// defaulting; they match the CRD defaults.
+const (
+	DefaultServerReplicas int32 = 2
+	DefaultReplicas       int32 = 1
+)
+
+// ServerReplicas returns the number of server HA nodes.
+func (s *ZabbixSystemSpec) ServerReplicas() int32 {
+	if s.Server.Replicas > 0 {
+		return s.Server.Replicas
+	}
+	return DefaultServerReplicas
+}
+
+// WebReplicas returns the number of frontend pods.
+func (s *ZabbixSystemSpec) WebReplicas() int32 {
+	if s.Web.Replicas > 0 {
+		return s.Web.Replicas
+	}
+	return DefaultReplicas
+}
+
+// WebServiceReplicas returns the number of web service pods.
+func (s *ZabbixSystemSpec) WebServiceReplicas() int32 {
+	if s.WebService.Replicas > 0 {
+		return s.WebService.Replicas
+	}
+	return DefaultReplicas
+}
