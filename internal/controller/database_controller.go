@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
 )
@@ -55,7 +55,7 @@ type DatabaseReconciler struct {
 	// APIReader reads Secrets directly from the API server, so Secret data is never
 	// cached by the operator.
 	APIReader client.Reader
-	Recorder  record.EventRecorder
+	Recorder  recorder.EventRecorder
 	// Now returns the current time; tests replace it.
 	Now func() time.Time
 }
@@ -64,7 +64,7 @@ type DatabaseReconciler struct {
 // +kubebuilder:rbac:groups=zabbix.io,resources=zabbixdatabases/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile recomputes the status of one ZabbixDatabase.
 func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -103,7 +103,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		db.Status = status
 		if err := r.Status().Update(ctx, db); err != nil {
 			if apierrors.IsConflict(err) {
-				return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{RequeueAfter: time.Second}, nil
 			}
 			return ctrl.Result{}, err
 		}
@@ -126,10 +126,10 @@ func (r *DatabaseReconciler) recordReadyTransition(db *zabbixv1alpha1.ZabbixData
 		return
 	}
 	if cur.Status == metav1.ConditionTrue {
-		r.Recorder.Event(db, corev1.EventTypeNormal, cur.Reason, cur.Message)
+		r.Recorder.Eventf(db, nil, corev1.EventTypeNormal, cur.Reason, "Evaluate", "%s", cur.Message)
 		return
 	}
-	r.Recorder.Event(db, corev1.EventTypeWarning, cur.Reason, cur.Message)
+	r.Recorder.Eventf(db, nil, corev1.EventTypeWarning, cur.Reason, "Evaluate", "%s", cur.Message)
 }
 
 // SetupWithManager registers the controller, its field indexes and its watches.

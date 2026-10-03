@@ -20,17 +20,26 @@ limitations under the License.
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 var (
 	// GroupVersion is the API group and version of these types.
 	GroupVersion = schema.GroupVersion{Group: "zabbix.io", Version: "v1alpha1"}
 
-	// SchemeBuilder registers the types with a scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	schemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 
 	// AddToScheme adds the types in this group-version to a scheme.
-	AddToScheme = SchemeBuilder.AddToScheme
+	AddToScheme = schemeBuilder.AddToScheme
+
+	// knownTypes collects the types registered by each type file.
+	knownTypes []runtime.Object
 )
+
+func addKnownTypes(s *runtime.Scheme) error {
+	s.AddKnownTypes(GroupVersion, knownTypes...)
+	metav1.AddToGroupVersion(s, GroupVersion)
+	return nil
+}

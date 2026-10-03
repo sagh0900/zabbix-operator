@@ -180,7 +180,7 @@ type ZabbixDatabaseList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&ZabbixDatabase{}, &ZabbixDatabaseList{})
+	knownTypes = append(knownTypes, &ZabbixDatabase{}, &ZabbixDatabaseList{})
 }
 
 // HostOrDefault returns the host Zabbix connects to.

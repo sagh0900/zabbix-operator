@@ -9,11 +9,11 @@ PKG     := github.com/sagh0900/zabbix-operator/internal/version
 LDFLAGS := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).GitCommit=$(GIT_COMMIT) -X $(PKG).BuildDate=$(BUILD_DATE)
 
 LOCALBIN ?= $(CURDIR)/bin
-ENVTEST_K8S_VERSION    ?= 1.30.0
-GOLANGCI_LINT_VERSION  ?= v1.59.1
-CONTROLLER_GEN_VERSION ?= v0.15.0
-SETUP_ENVTEST_VERSION  ?= release-0.19
-KUSTOMIZE_VERSION      ?= v5.4.2
+ENVTEST_K8S_VERSION    ?= 1.37.0
+GOLANGCI_LINT_VERSION  ?= v2.14.0
+CONTROLLER_GEN_VERSION ?= v0.22.0
+SETUP_ENVTEST_VERSION  ?= release-0.25
+KUSTOMIZE_VERSION      ?= v5.8.2
 
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_GEN_VERSION)
 SETUP_ENVTEST  ?= $(LOCALBIN)/setup-envtest-$(SETUP_ENVTEST_VERSION)
@@ -70,4 +70,4 @@ $(SETUP_ENVTEST): | $(LOCALBIN)
 $(KUSTOMIZE): | $(LOCALBIN)
 	$(call go-install-tool,$@,sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION),kustomize)
 $(GOLANGCI_LINT): | $(LOCALBIN)
-	$(call go-install-tool,$@,github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION),golangci-lint)
+	$(call go-install-tool,$@,github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION),golangci-lint)
