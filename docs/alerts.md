@@ -3,6 +3,25 @@
 Runbook for the alerts in `config/monitoring/prometheusrule.yaml`. Each alert links here
 through its `runbook_url` annotation.
 
+## ZabbixSystemRunning
+
+Informational heartbeat, one per ZabbixSystem: fires while the system is Running and its
+`ha-gc` check, which runs every 5 minutes, succeeded within the last 10 minutes. Route it to
+a dead man's switch or heartbeat receiver with `repeat_interval: 5m`, so a notification
+arrives after every `ha-gc` cycle:
+
+```yaml
+route:
+  routes:
+    - matchers: [alertname = ZabbixSystemRunning]
+      receiver: heartbeat
+      group_wait: 0s
+      repeat_interval: 5m
+```
+
+When the notifications stop, the system left the Running phase, its maintenance stopped, or
+the operator stopped reporting. It needs no action while it fires.
+
 ## ZabbixOperatorDown
 
 No operator metrics target has been up for 5 minutes. Without the operator, Zabbix keeps
