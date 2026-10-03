@@ -30,6 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
+	"github.com/sagh0900/zabbix-operator/internal/controller"
 	"github.com/sagh0900/zabbix-operator/internal/version"
 )
 
@@ -37,6 +39,7 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(zabbixv1alpha1.AddToScheme(scheme))
 }
 
 func main() {
@@ -73,6 +76,15 @@ func main() {
 	})
 	if err != nil {
 		log.Error(err, "unable to create manager")
+		os.Exit(1)
+	}
+
+	if err := (&controller.DatabaseReconciler{
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Recorder:  mgr.GetEventRecorderFor("zabbix-operator"),
+	}).SetupWithManager(mgr); err != nil {
+		log.Error(err, "unable to set up controller", "controller", "ZabbixDatabase")
 		os.Exit(1)
 	}
 

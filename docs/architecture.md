@@ -55,13 +55,15 @@ Status reports the CNPG phase, the current primary and these conditions:
 
 | Condition | True when |
 |---|---|
-| `ClusterReady` | The CNPG cluster has at least one ready instance and a healthy phase |
+| `ClusterReady` | The CNPG cluster has a primary, CNPG reports it healthy, and no switchover is in progress |
 | `CredentialsReady` | The referenced secret exists and has both keys |
 | `PrimaryStable` | The primary has not changed more than `flap.threshold` times within `flap.window` (decays back to stable once quiet) |
 | `Ready` | All of the above. Zabbix server pods are only started, and upgrades only run, while `Ready=True` |
 
-The controller reads CNPG status only. It never opens a database connection itself and never
-writes to CNPG objects. Every SQL statement the operator needs runs inside a short-lived Job
+The controller reads CNPG status and the credentials Secret only. Secrets are read directly
+from the API server and never cached. It never opens a database connection itself and never
+writes to CNPG objects. A Warning event is emitted when `Ready` becomes False and a Normal
+event when it becomes True. Every SQL statement the operator needs runs inside a short-lived Job
 (see [Jobs](#jobs)).
 
 ### ZabbixSuite

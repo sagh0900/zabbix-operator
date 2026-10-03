@@ -1,0 +1,2 @@
+resources:
+  - bases/zabbix.io_zabbixdatabases.yaml

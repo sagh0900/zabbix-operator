@@ -1,0 +1,10 @@
+namespace: zabbix-operator
+namePrefix: zabbix-operator-
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: zabbix-operator
+    includeSelectors: false
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager

@@ -9,25 +9,44 @@ PKG     := github.com/sagh0900/zabbix-operator/internal/version
 LDFLAGS := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).GitCommit=$(GIT_COMMIT) -X $(PKG).BuildDate=$(BUILD_DATE)
 
 LOCALBIN ?= $(CURDIR)/bin
-ENVTEST_K8S_VERSION ?= 1.30.0
-GOLANGCI_LINT_VERSION ?= v1.59.1
+ENVTEST_K8S_VERSION    ?= 1.30.0
+GOLANGCI_LINT_VERSION  ?= v1.59.1
+CONTROLLER_GEN_VERSION ?= v0.15.0
+SETUP_ENVTEST_VERSION  ?= release-0.19
+KUSTOMIZE_VERSION      ?= v5.4.2
+
+CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_GEN_VERSION)
+SETUP_ENVTEST  ?= $(LOCALBIN)/setup-envtest-$(SETUP_ENVTEST_VERSION)
+KUSTOMIZE      ?= $(LOCALBIN)/kustomize-$(KUSTOMIZE_VERSION)
+GOLANGCI_LINT  ?= $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
 .PHONY: help
 help: ## Show targets.
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/{printf "  %-16s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 
-.PHONY: fmt vet lint test build
+.PHONY: manifests generate fmt vet lint test build build-installer
+manifests: $(CONTROLLER_GEN) ## Generate CRDs and RBAC from markers.
+	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
+generate: $(CONTROLLER_GEN) ## Generate deepcopy code.
+	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 fmt: ## go fmt.
 	go fmt ./...
 vet: ## go vet.
 	go vet ./...
-lint: $(LOCALBIN) ## golangci-lint.
-	test -x $(LOCALBIN)/golangci-lint || GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-	$(LOCALBIN)/golangci-lint run
-test: fmt vet ## Unit and envtest suites.
-	go test ./... -coverprofile cover.out
+lint: $(GOLANGCI_LINT) ## golangci-lint.
+	$(GOLANGCI_LINT) run
+test: manifests generate fmt vet $(SETUP_ENVTEST) ## Unit and envtest suites.
+	@assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" && test -n "$$assets" || \
+		{ echo "envtest assets unavailable"; exit 1; }; \
+		KUBEBUILDER_ASSETS="$$assets" go test ./... -coverprofile cover.out
 build: ## Build the manager binary.
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(LOCALBIN)/manager ./cmd/manager
+
+build-installer: manifests $(KUSTOMIZE) ## Render dist/install.yaml for IMG.
+	mkdir -p dist
+	cd config/manager && $(KUSTOMIZE) edit set image manager=$(IMG)
+	$(KUSTOMIZE) build config/default > dist/install.yaml
+	cd config/manager && $(KUSTOMIZE) edit set image manager=manager:latest
 
 .PHONY: docker-build docker-push
 docker-build: ## Build the image.
@@ -38,3 +57,17 @@ docker-push: ## Push the image.
 
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
+
+# go-install-tool installs binary $(4) from package $(2) at version $(3) as $(1).
+define go-install-tool
+@[ -f $(1) ] || { set -e; tmp=$$(mktemp -d); GOBIN=$$tmp go install $(2)@$(3); mv $$tmp/$(4) $(1); rm -rf $$tmp; }
+endef
+
+$(CONTROLLER_GEN): | $(LOCALBIN)
+	$(call go-install-tool,$@,sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_GEN_VERSION),controller-gen)
+$(SETUP_ENVTEST): | $(LOCALBIN)
+	$(call go-install-tool,$@,sigs.k8s.io/controller-runtime/tools/setup-envtest,$(SETUP_ENVTEST_VERSION),setup-envtest)
+$(KUSTOMIZE): | $(LOCALBIN)
+	$(call go-install-tool,$@,sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION),kustomize)
+$(GOLANGCI_LINT): | $(LOCALBIN)
+	$(call go-install-tool,$@,github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION),golangci-lint)

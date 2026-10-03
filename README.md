@@ -11,12 +11,22 @@ proxies, agents) on a PostgreSQL database managed by
 See [docs/architecture.md](docs/architecture.md) for the design and
 [AGENTS.md](AGENTS.md) for contribution rules.
 
+## Install
+
+Requires CloudNativePG.
+
+```sh
+kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/vX.Y.Z/install.yaml
+```
+
 ## Build
 
 ```sh
-make test          # unit and envtest suites
-make build         # bin/manager
-make docker-build  # ghcr.io/sagh0900/zabbix-operator:v$(cat VERSION)
+make test              # unit and envtest suites
+make lint              # golangci-lint
+make build             # bin/manager
+make docker-build      # ghcr.io/sagh0900/zabbix-operator:v$(cat VERSION)
+make build-installer   # dist/install.yaml
 ```
 
 ## License
