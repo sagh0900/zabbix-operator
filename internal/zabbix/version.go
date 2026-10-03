@@ -33,6 +33,8 @@ type Version struct {
 	Pre string
 }
 
+var preRe = regexp.MustCompile(`^(alpha|beta|rc)(\d+)$`)
+
 var versionRe = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)((?:alpha|beta|rc)\d+)?$`)
 
 // ParseVersion parses a Zabbix version.
@@ -49,6 +51,38 @@ func ParseVersion(s string) (Version, error) {
 
 func (v Version) String() string {
 	return fmt.Sprintf("%d.%d.%d%s", v.Major, v.Minor, v.Patch, v.Pre)
+}
+
+// Compare returns -1, 0 or 1 when v is older than, equal to or newer than o. A
+// pre-release is older than the final release of the same number (8.0.0rc1 < 8.0.0), and
+// alpha < beta < rc.
+func (v Version) Compare(o Version) int {
+	for _, d := range []int{v.Major - o.Major, v.Minor - o.Minor, v.Patch - o.Patch} {
+		if d != 0 {
+			return sign(d)
+		}
+	}
+	return sign(preRank(v.Pre) - preRank(o.Pre))
+}
+
+// preRank orders pre-releases below the final release; within a kind by number.
+func preRank(pre string) int {
+	if pre == "" {
+		return 1 << 30
+	}
+	m := preRe.FindStringSubmatch(pre)
+	n, _ := strconv.Atoi(m[2])
+	return map[string]int{"alpha": 1, "beta": 2, "rc": 3}[m[1]]<<20 + n
+}
+
+func sign(d int) int {
+	switch {
+	case d < 0:
+		return -1
+	case d > 0:
+		return 1
+	}
+	return 0
 }
 
 // Line is the release line, for example "8.0".

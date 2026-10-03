@@ -35,8 +35,10 @@ const (
 	CommandHAGC     = "ha-gc"
 )
 
-// Main runs "manager job <command> [flags]" and returns the process exit code: 0 when
-// the result is OK, 1 when the command ran and reported a problem, 2 on usage errors.
+// Main runs "manager job <command> [flags]" and returns the process exit code: 0 when the
+// command produced a result, even one that blocks (the result says so); 1 when it could
+// not reach a result for a reason worth retrying, such as an unreachable database, so the
+// Job retries; 2 on usage errors.
 func Main(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: manager job precheck|ha-reset|ha-gc [flags]")
@@ -75,7 +77,7 @@ func Main(args []string) int {
 	if err != nil {
 		r = Result{Command: cmd, Reason: "Configuration", Message: err.Error()}
 	} else if conn, err := Connect(ctx, cfg); err != nil {
-		r = Result{Command: cmd, Reason: "DatabaseUnreachable", Message: err.Error()}
+		r = Result{Command: cmd, Reason: reasonDatabaseUnreachable, Message: err.Error()}
 	} else {
 		defer conn.Close(context.Background()) //nolint:errcheck // process exits next
 		switch cmd {
@@ -90,7 +92,7 @@ func Main(args []string) int {
 	if err := r.write(*resultFile); err != nil {
 		fmt.Fprintln(os.Stderr, "writing result:", err)
 	}
-	if !r.OK {
+	if r.Retryable() {
 		return 1
 	}
 	return 0

@@ -56,6 +56,16 @@ func (r Result) write(path string) error {
 	return os.WriteFile(path, b, 0o644)
 }
 
+// Retryable reports whether the command failed for a reason that may go away by itself,
+// such as a database that cannot be reached, rather than reporting a finding.
+func (r Result) Retryable() bool {
+	switch r.Reason {
+	case reasonDatabaseUnreachable, "Configuration", reasonDatabaseError:
+		return true
+	}
+	return false
+}
+
 // ParseResult decodes a termination message written by a Job.
 func ParseResult(message string) (Result, error) {
 	var r Result

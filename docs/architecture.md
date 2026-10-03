@@ -291,8 +291,11 @@ needed.
 
 ### Frontend and web service
 
-- Web Pods do **not** set `ZBX_SERVER_HOST`. The frontend reads the active node's address
-  from `ha_node`, which is the only reliable way to reach the active server in HA mode.
+- Web Pods set `ZBX_SERVER_HOST=<system>-server`. That Service selects only the active HA
+  node, so the frontend always reaches it, on every Zabbix version and whatever the system is
+  called. (A Service selecting all server Pods would send about half the frontend's requests
+  to a standby; that is why plain deployments leave `ZBX_SERVER_HOST` unset and rely on
+  `ha_node`.)
 - Web Pods are stateless (sessions live in the database) and scale horizontally behind the
   `<system>-web` Service.
 - The server is pointed at the web service with
@@ -461,24 +464,48 @@ Agents are not touched; their image is set separately.
 
 ### Major upgrade (7.0 → 8.0)
 
-A major upgrade changes the schema irreversibly; the only way back is a database restore.
-It runs only when `spec.upgrade.approveMajor` equals the target line, so each major
-upgrade is approved explicitly and once.
+A schema upgrade changes the database irreversibly; the only way back is a database
+restore. Before anything stops, the operator checks, in this order, and reports the first
+problem as `Blocked` with a message and a Warning event, changing nothing:
 
-1. Validate: target line is supported, PostgreSQL version satisfies the target line
-   (see [PostgreSQL version](#postgresql-version)), CNPG replicas are in sync, and a CNPG
-   `Backup` of the cluster completed within `requireBackupWithin`. Any failure sets
-   `UpgradeBlocked=True` with the reason, emits a Warning event and changes nothing; the
-   upgrade continues by itself once the condition is resolved.
-2. Delete all server Pods and wait until none exist.
-3. `precheck` Job, then `ha-reset` Job.
-4. Start one server Pod of the new version in standalone mode. Zabbix upgrades the schema on
-   start; the Pod becomes Ready once the upgrade has completed.
-5. Delete the standalone Pod, then start HA server Pods one after another.
-6. Roll web, web service and proxies to the new version. Proxies of the previous line
-   keep sending data while they wait to be rolled.
+1. the `precheck` Job: the target line is supported, the connection reaches the primary,
+   PostgreSQL is new enough for the target line (8.0 needs 15 or newer), and the schema is
+   not newer than the target;
+2. approval: when the release line changes, `spec.upgrade.approveMajor` must equal the target
+   line, so each major upgrade is approved explicitly;
+3. every PostgreSQL instance of the CNPG cluster is healthy;
+4. a CNPG `Backup` of the cluster completed within `spec.upgrade.requireBackupWithin`
+   (default 24h; `0s` skips this check).
 
-Downgrades are rejected.
+The checks are re-evaluated whenever the CNPG cluster or its Backups change, so the upgrade
+starts as soon as the cause is resolved. Then, with each step recorded in
+`status.upgradeStep` (and the target in `status.upgradeTarget`) so an operator restart
+resumes where it left off:
+
+1. **StoppingServers**: all server Pods are removed. The frontend and web service keep
+   running the old version.
+2. **ResettingHA**: the `ha-reset` Job clears `ha_node`; it waits while any standby or active
+   node still heartbeats, but not for nodes that stopped cleanly.
+3. **UpgradingSchema**: one standalone server of the new version upgrades the schema. Once it
+   listens, a second `precheck` must confirm that the database schema matches the target
+   before anything else uses it.
+4. The standalone server stops; HA servers start on the new version, then the frontend and
+   web service roll. The phase stays `Upgrading` until every component has moved.
+
+While the database is unavailable during an upgrade, the upgrade pauses; a running schema
+upgrade is never interrupted. A change of `spec.version` during an upgrade waits until it
+has finished. Proxies of the previous line keep sending data while they wait to be rolled.
+
+Measured on kind with CloudNativePG 1.30 and PostgreSQL 17 (small database): 7.0.25 →
+8.0.0rc1 took 28 seconds from request to Running, with the server Service empty for about
+13 seconds.
+
+### Version changes and downgrades
+
+Any well-formed version is accepted by the API. A version older than the running one is
+`Blocked` (`Downgrade`) without touching anything, and so is a database schema newer than
+the target; setting `spec.version` back withdraws the request, including a blocked upgrade
+that never started.
 
 ### Configuration change
 
@@ -532,6 +559,7 @@ are exported as well.
 | Group | Alert | Fires when |
 |---|---|---|
 | operator | `ZabbixOperatorDown` | No operator target is up for 5m |
+| server | `ZabbixSystemRunning` | Info heartbeat: fires while a system is Running and its `ha-gc` check succeeded within 10m; with `repeat_interval: 5m` it notifies after every `ha-gc` cycle, and its absence is the signal |
 | operator | `ZabbixOperatorReconcileErrors` | Reconcile errors persist for 15m |
 | database | `ZabbixDatabaseNotReady` | `database_ready == 0` for 5m (critical after 15m) |
 | database | `ZabbixDatabasePrimaryFlapping` | `PrimaryStable` False for 10m |

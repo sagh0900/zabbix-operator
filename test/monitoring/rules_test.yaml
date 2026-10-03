@@ -267,3 +267,34 @@ tests:
               summary: Stale ha_node rows are not being removed
               description: ha-gc has not succeeded for 30 minutes on zabbix/zabbix.
               runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixhanodegcstale
+
+  - name: running watchdog follows ha-gc
+    interval: 1m
+    input_series:
+      # Running from 2m; ha-gc succeeds at 3m and 8m, then stops.
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="zabbix",phase="Running"}'
+        values: '0x2 1x30'
+      - series: 'zabbix_operator_hanode_gc_last_success_timestamp_seconds{namespace="zabbix",system="zabbix"}'
+        values: '_x3 180x5 480x25'
+      # A degraded system with recent ha-gc runs must not send the heartbeat.
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="degraded",phase="Running"}'
+        values: '0x32'
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="degraded",phase="Degraded"}'
+        values: '1x32'
+      - series: 'zabbix_operator_hanode_gc_last_success_timestamp_seconds{namespace="zabbix",system="degraded"}'
+        values: '_x3 180x5 480x25'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ZabbixSystemRunning
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ZabbixSystemRunning
+        exp_alerts:
+          - exp_labels: { severity: info, namespace: zabbix, system: zabbix, phase: Running }
+            exp_annotations:
+              summary: Zabbix system is running
+              description: ZabbixSystem zabbix/zabbix is running and its ha-gc check succeeded within the last 10 minutes. This alert fires continuously as a heartbeat; its absence means the system is not running or its maintenance has stopped.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixsystemrunning
+      - eval_time: 19m
+        alertname: ZabbixSystemRunning
+        exp_alerts: []

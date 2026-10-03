@@ -120,36 +120,23 @@ func TestSystemAPI_Version(t *testing.T) {
 	}
 }
 
-func TestSystemAPI_UpgradeDirection(t *testing.T) {
+// Any well-formed version change is accepted by the API, including a lower one: whether it
+// may run is decided against the running version and the database (see the controller
+// tests), so a blocked request can always be withdrawn.
+func TestSystemAPI_VersionChangesAreAccepted(t *testing.T) {
 	requireEnvtest(t)
 	ctx := context.Background()
 	sys := newSystem(newNamespace(t), "7.0.25")
 	if err := k8s.Create(ctx, sys); err != nil {
 		t.Fatal(err)
 	}
-	// Merge patches carry only the change, so they never conflict with the controller's
-	// status updates.
-	set := func(v string) error {
+	for _, v := range []string{"8.0.0rc1", "7.0.30", "7.0.1", "8.0.3"} {
 		before := sys.DeepCopy()
 		sys.Spec.Version = v
-		return k8s.Patch(ctx, sys, client.MergeFrom(before))
-	}
-	reload := func() {
-		if err := k8s.Get(ctx, client.ObjectKeyFromObject(sys), sys); err != nil {
-			t.Fatal(err)
+		if err := k8s.Patch(ctx, sys, client.MergeFrom(before)); err != nil {
+			t.Fatalf("change to %s rejected: %v", v, err)
 		}
 	}
-
-	expectRejected(t, set("7.0.1"), "cannot be lowered")
-	reload()
-	for _, v := range []string{"7.0.30", "8.0.0rc1", "8.0.0", "8.0.3"} {
-		if err := set(v); err != nil {
-			t.Fatalf("upgrade to %s rejected: %v", v, err)
-		}
-	}
-	expectRejected(t, set("8.0.2"), "cannot be lowered")
-	reload()
-	expectRejected(t, set("7.0.31"), "cannot be lowered")
 }
 
 func TestSystemAPI_DatabaseRefImmutable(t *testing.T) {

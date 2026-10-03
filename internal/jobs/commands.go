@@ -28,11 +28,18 @@ import (
 	"github.com/sagh0900/zabbix-operator/internal/zabbix"
 )
 
-// Zabbix HA node status as stored in ha_node.status.
-const haNodeActive = 3
+// Zabbix HA node status as stored in ha_node.status: 0 standby, 1 stopped, 2 unavailable,
+// 3 active.
+const (
+	haNodeStandby = 0
+	haNodeActive  = 3
+)
 
-// reasonDatabaseError reports a failed query.
-const reasonDatabaseError = "DatabaseError"
+// Reasons for failures worth retrying.
+const (
+	reasonDatabaseError       = "DatabaseError"
+	reasonDatabaseUnreachable = "DatabaseUnreachable"
+)
 
 // Precheck verifies the database can take target: it is reachable, is the primary, runs a
 // PostgreSQL version the target line supports, and holds a schema the target can run on
@@ -42,7 +49,7 @@ func Precheck(ctx context.Context, conn *pgx.Conn, target zabbix.Version) Result
 	var f facts
 	if err := conn.QueryRow(ctx, "SELECT current_setting('server_version_num')::int, pg_is_in_recovery()").
 		Scan(&f.versionNum, &f.inRecovery); err != nil {
-		return Result{Command: CommandPrecheck, Reason: "DatabaseUnreachable", Message: fmt.Sprintf("querying the server: %v", err)}
+		return Result{Command: CommandPrecheck, Reason: reasonDatabaseUnreachable, Message: fmt.Sprintf("querying the server: %v", err)}
 	}
 	mandatory, err := schemaMandatory(ctx, conn)
 	if err != nil {
@@ -123,13 +130,15 @@ func schemaMandatory(ctx context.Context, conn *pgx.Conn) (int, error) {
 }
 
 // HAReset deletes every ha_node row, so a server started next registers cleanly. It runs
-// only when no server pod exists; as a safeguard it refuses while any node has
-// heartbeated within staleSeconds, which means a server is still running somewhere.
+// only when no server pod exists; as a safeguard it refuses while any standby or active
+// node has heartbeated within staleSeconds, which means a server is still running
+// somewhere. Rows of nodes that stopped cleanly or are marked unavailable do not block.
 func HAReset(ctx context.Context, conn *pgx.Conn, staleSeconds int) Result {
 	r := Result{Command: CommandHAReset}
 	var live []string
 	rows, err := conn.Query(ctx,
-		"SELECT name FROM ha_node WHERE lastaccess >= extract(epoch FROM now())::int - $1 ORDER BY name", staleSeconds)
+		"SELECT name FROM ha_node WHERE status IN ($2, $3) AND lastaccess >= extract(epoch FROM now())::int - $1 ORDER BY name",
+		staleSeconds, haNodeStandby, haNodeActive)
 	if err != nil {
 		if isUndefinedTable(err) {
 			r.OK, r.Message = true, "no ha_node table; nothing to reset"

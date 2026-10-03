@@ -95,11 +95,18 @@ func serverTLSMode(mode string) string {
 	}
 }
 
-// WebPod renders frontend instance name. ZBX_SERVER_HOST is never set: in HA mode the
-// frontend finds the active server through the ha_node table.
+// WebPod renders frontend instance name. The frontend talks to the server through the
+// server Service, which selects only the active HA node, so it behaves the same on every
+// Zabbix version and whatever the system is called.
 func WebPod(in Input, name string) *corev1.Pod {
 	sys, db := in.System, in.Database
-	env := databaseEnv(db)
+	serverPort := sys.Spec.Server.Service.Port
+	if serverPort == 0 {
+		serverPort = TrapperPort
+	}
+	env := append(databaseEnv(db),
+		corev1.EnvVar{Name: "ZBX_SERVER_HOST", Value: ServiceName(sys, Server)},
+		corev1.EnvVar{Name: "ZBX_SERVER_PORT", Value: fmt.Sprint(serverPort)})
 	if sys.Spec.Timezone != "" {
 		env = append(env, corev1.EnvVar{Name: "PHP_TZ", Value: sys.Spec.Timezone}, corev1.EnvVar{Name: "TZ", Value: sys.Spec.Timezone})
 	}

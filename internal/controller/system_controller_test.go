@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -113,9 +114,12 @@ func finishJob(t *testing.T, ns string, result jobs.Result) {
 		t.Errorf("job image %q", job.Spec.Template.Spec.Containers[0].Image)
 	}
 	msg, _ := json.Marshal(result)
+	// The pod is owned by the Job, as the Job controller would create it.
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-run", Namespace: ns, Labels: map[string]string{"job-name": job.Name}},
-		Spec:       corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "job", Image: testOperatorImage}}},
+		ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-" + string(job.UID)[:5], Namespace: ns, Labels: map[string]string{"job-name": job.Name},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID,
+				Controller: ptr.To(true)}}},
+		Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "job", Image: testOperatorImage}}},
 	}
 	if err := k8s.Create(ctx, pod); err != nil {
 		t.Fatal(err)
@@ -355,8 +359,8 @@ func TestSystem_ServerAndWebPods(t *testing.T) {
 		t.Errorf("server controller reference %+v", ref)
 	}
 	web := getPod(t, ns, "zabbix-web-0")
-	if _, set := envValue(web, "zabbix-web", "ZBX_SERVER_HOST"); set {
-		t.Error("the frontend must not set ZBX_SERVER_HOST in HA mode")
+	if v, _ := envValue(web, "zabbix-web", "ZBX_SERVER_HOST"); v != "zabbix-server" {
+		t.Errorf("frontend ZBX_SERVER_HOST %q, want the active-only server Service", v)
 	}
 	if v, _ := envValue(web, "zabbix-web", "PHP_TZ"); v != "Europe/Stockholm" {
 		t.Errorf("PHP_TZ %q", v)
@@ -799,4 +803,289 @@ func pendingJob(t *testing.T, ns, command string) *batchv1.Job {
 		return fmt.Errorf("no pending %s Job", command)
 	})
 	return job
+}
+
+// patchSpec applies mutate to the system's spec with a merge patch.
+func patchSpec(t *testing.T, ns string, mutate func(*zabbixv1alpha1.ZabbixSystemSpec)) {
+	t.Helper()
+	sys := getSystem(t, ns)
+	before := sys.DeepCopy()
+	mutate(&sys.Spec)
+	if err := k8s.Patch(context.Background(), sys, client.MergeFrom(before)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// createBackup creates a CNPG Backup of cluster pg that completed at stopped.
+func createBackup(t *testing.T, ns, name string, stopped time.Time) {
+	t.Helper()
+	b := &unstructured.Unstructured{}
+	b.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Backup"})
+	b.SetNamespace(ns)
+	b.SetName(name)
+	if err := unstructured.SetNestedField(b.Object, "pg", "spec", "cluster", "name"); err != nil {
+		t.Fatal(err)
+	}
+	if err := k8s.Create(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	if err := unstructured.SetNestedMap(b.Object, map[string]interface{}{
+		"phase": "completed", "stoppedAt": stopped.UTC().Format(time.RFC3339)}, "status"); err != nil {
+		t.Fatal(err)
+	}
+	if err := k8s.Status().Update(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The whole 7.0 → 8.0 schema upgrade: gates, all servers stopped, HA table reset, one
+// standalone server upgrades the schema, HA servers return on the new version, and the
+// frontend follows.
+func TestSystem_MajorUpgrade(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+	createBackup(t, ns, "before-8", time.Now().Add(-time.Hour))
+
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+		s.Version, s.Upgrade.ApproveMajor = "8.0.0rc1", "8.0"
+	})
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SchemaUpgrade)})
+
+	waitPod(t, ns, "zabbix-server-0", false)
+	waitPod(t, ns, "zabbix-server-1", false)
+	sys := waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "Upgrading from 7.0.25 to 8.0.0rc1: clearing the HA node table")
+	if sys.Status.UpgradeStep != zabbixv1alpha1.StepResettingHA || sys.Status.UpgradeTarget != "8.0.0rc1" {
+		t.Errorf("step %q target %q", sys.Status.UpgradeStep, sys.Status.UpgradeTarget)
+	}
+	if image(getPod(t, ns, "zabbix-web-0")) != "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.0.25" {
+		t.Error("the frontend must stay on the old version until the servers are back")
+	}
+
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandHAReset, OK: true, Deleted: 2})
+	initPod := waitPod(t, ns, "zabbix-server-init-0", true)
+	if image(initPod) != "zabbix/zabbix-server-pgsql:ubuntu-8.0.0rc1" {
+		t.Errorf("schema upgrade image %q", image(initPod))
+	}
+	if _, ha := envValue(initPod, "zabbix-server", "ZBX_HANODENAME"); ha {
+		t.Error("the schema upgrade must run on a standalone server")
+	}
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "schema upgrade running on zabbix-server-init-0 (standalone)")
+
+	setPod(t, ns, "zabbix-server-init-0") // the standalone server listens
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "verifying the upgraded schema")
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SchemaUpgrade),
+		Message: "PostgreSQL 17, schema 7000000 will be upgraded for Zabbix 8.0.0rc1"})
+	// A mismatch keeps the servers stopped and runs the verification again.
+	time.Sleep(2 * time.Second)
+	if getPod(t, ns, "zabbix-server-0") != nil {
+		t.Fatal("HA servers started before the schema was verified")
+	}
+	pendingJob(t, ns, jobs.CommandPrecheck)
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SameSchema)})
+	waitPod(t, ns, "zabbix-server-init-0", false)
+	s0 := waitPod(t, ns, "zabbix-server-0", true)
+	if image(s0) != "zabbix/zabbix-server-pgsql:ubuntu-8.0.0rc1" {
+		t.Errorf("server image %q", image(s0))
+	}
+	waitPod(t, ns, "zabbix-server-1", true)
+	setPod(t, ns, "zabbix-server-0")
+	setPod(t, ns, "zabbix-server-1")
+	setActive(ns, "zabbix-server-0")
+	eventually(t, func() error {
+		p := getPod(t, ns, "zabbix-web-0")
+		if p == nil || image(p) != "zabbix/zabbix-web-nginx-pgsql:ubuntu-8.0.0rc1" {
+			return fmt.Errorf("frontend not on 8.0.0rc1 yet")
+		}
+		return nil
+	})
+	setPod(t, ns, "zabbix-web-0")
+	eventually(t, func() error {
+		p := getPod(t, ns, "zabbix-webservice-0")
+		if p == nil || image(p) != "zabbix/zabbix-web-service:ubuntu-8.0.0rc1" {
+			return fmt.Errorf("web service not on 8.0.0rc1 yet")
+		}
+		return nil
+	})
+	setPod(t, ns, "zabbix-webservice-0")
+	sys = waitPhase(t, ns, zabbixv1alpha1.PhaseRunning, "zabbix-server-0 active, 1 standby")
+	if sys.Status.RunningVersion != "8.0.0rc1" || sys.Status.UpgradeStep != "" || sys.Status.UpgradeTarget != "" {
+		t.Errorf("status %+v", sys.Status)
+	}
+	waitEvent(t, ns, corev1.EventTypeNormal, "SchemaUpgraded", "Database schema upgraded from 7.0.25 to 8.0.0rc1")
+}
+
+// Every gate blocks before anything stops, says why, and lets the upgrade go once the
+// cause is resolved.
+func TestSystem_MajorUpgradeGates(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+	s0, s1 := uid(t, ns, "zabbix-server-0"), uid(t, ns, "zabbix-server-1")
+
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Version = "8.0.0rc1" })
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SchemaUpgrade)})
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked,
+		`Upgrading from 7.0 to 8.0 changes the database schema irreversibly; set spec.upgrade.approveMajor: "8.0" to approve it`)
+
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "8.0" })
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked, "No completed CNPG Backup of pg within 24h0m0s (latest: none)")
+
+	createBackup(t, ns, "old", time.Now().Add(-48*time.Hour))
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked, "No completed CNPG Backup of pg within 24h0m0s (latest: ")
+
+	cluster := &unstructured.Unstructured{}
+	cluster.SetGroupVersionKind(CNPGClusterGVK)
+	if err := k8s.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "pg"}, cluster); err != nil {
+		t.Fatal(err)
+	}
+	if err := unstructured.SetNestedField(cluster.Object, int64(3), "spec", "instances"); err != nil {
+		t.Fatal(err)
+	}
+	if err := k8s.Update(context.Background(), cluster); err != nil {
+		t.Fatal(err)
+	}
+	createBackup(t, ns, "fresh", time.Now())
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked, "2 of 3 PostgreSQL instances are healthy; the schema upgrade waits for all of them")
+
+	if uid(t, ns, "zabbix-server-0") != s0 || uid(t, ns, "zabbix-server-1") != s1 {
+		t.Fatal("servers were touched while the upgrade was blocked")
+	}
+
+	if err := k8s.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "pg"}, cluster); err != nil {
+		t.Fatal(err)
+	}
+	if err := unstructured.SetNestedField(cluster.Object, int64(2), "spec", "instances"); err != nil {
+		t.Fatal(err)
+	}
+	if err := k8s.Update(context.Background(), cluster); err != nil {
+		t.Fatal(err)
+	}
+	waitPod(t, ns, "zabbix-server-0", false) // all gates pass: the servers stop
+}
+
+// requireBackupWithin: 0s skips the backup gate.
+func TestSystem_MajorUpgradeBackupGateCanBeSkipped(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+		s.Version, s.Upgrade.ApproveMajor = "8.0.0rc1", "8.0"
+		s.Upgrade.RequireBackupWithin = &metav1.Duration{}
+	})
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SchemaUpgrade)})
+	waitPod(t, ns, "zabbix-server-0", false)
+}
+
+// A version older than the running one is blocked without touching anything, and setting
+// it back resumes normal operation.
+func TestSystem_DowngradeIsBlockedAndWithdrawable(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+	s0 := uid(t, ns, "zabbix-server-0")
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Version = "7.0.1" })
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked,
+		"Zabbix 7.0.25 is running; 7.0.1 is older and Zabbix cannot downgrade. Set spec.version to 7.0.25 or newer")
+	if uid(t, ns, "zabbix-server-0") != s0 {
+		t.Fatal("a server was replaced for a refused downgrade")
+	}
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Version = "7.0.25" })
+	waitPhase(t, ns, zabbixv1alpha1.PhaseRunning, "active")
+}
+
+// A blocked upgrade request can be withdrawn: here 8.0 is blocked by an old PostgreSQL and
+// the request is changed to a patch release, which proceeds.
+func TestSystem_BlockedUpgradeCanBeWithdrawn(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.1", nil)
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Version, s.Upgrade.ApproveMajor = "8.0.0rc1", "8.0" })
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, Reason: "PostgreSQLTooOld",
+		Message: "PostgreSQL 14 is too old for Zabbix 8.0 (needs 15 or newer)"})
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked, "PostgreSQL 14 is too old for Zabbix 8.0 (needs 15 or newer)")
+
+	s1 := uid(t, ns, "zabbix-server-1")
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Version = "7.0.25" })
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SameSchema)})
+	waitReplaced(t, ns, "zabbix-server-1", s1) // the patch upgrade rolls the standby first
+}
+
+// While the database is unavailable, a running schema upgrade is paused, not interrupted.
+func TestSystem_MajorUpgradePausesForDatabase(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+		s.Version, s.Upgrade.ApproveMajor = "8.0.0rc1", "8.0"
+		s.Upgrade.RequireBackupWithin = &metav1.Duration{}
+	})
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SchemaUpgrade)})
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandHAReset, OK: true})
+	initUID := waitPod(t, ns, "zabbix-server-init-0", true).UID
+
+	cluster := &unstructured.Unstructured{}
+	cluster.SetGroupVersionKind(CNPGClusterGVK)
+	if err := k8s.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "pg"}, cluster); err != nil {
+		t.Fatal(err)
+	}
+	setClusterStatus(t, cluster, primary1, primary2)
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "paused; Waiting for database: primary is moving from pg-1 to pg-2")
+	time.Sleep(time.Second)
+	if uid(t, ns, "zabbix-server-init-0") != initUID {
+		t.Fatal("the schema upgrade was interrupted")
+	}
+	setClusterStatus(t, cluster, primary2, primary2)
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "schema upgrade running on zabbix-server-init-0")
+}
+
+// ha-reset refuses while a node still heartbeats; the upgrade waits and says why.
+func TestSystem_MajorUpgradeWaitsForLiveNodes(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+		s.Version, s.Upgrade.ApproveMajor = "8.0.0rc1", "8.0"
+		s.Upgrade.RequireBackupWithin = &metav1.Duration{}
+	})
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SchemaUpgrade)})
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandHAReset, Reason: "LiveNodes",
+		Message: "refusing to reset: zabbix-server-old heartbeated within 30s"})
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading,
+		"waiting to clear the HA node table: refusing to reset: zabbix-server-old heartbeated within 30s")
+	if getPod(t, ns, "zabbix-server-init-0") != nil {
+		t.Fatal("the schema upgrade started while a node still heartbeats")
+	}
+}
+
+// A Job recreated under the same name must not read the result its predecessor's pod
+// left behind before garbage collection removed it.
+func TestSystem_JobResultIgnoresPredecessorPods(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	readyDatabase(t, ns)
+	createSystem(t, ns, "8.0.0rc1", nil)
+	job := pendingJob(t, ns, jobs.CommandPrecheck)
+	// A leftover pod of an earlier Job with the same name, not yet garbage-collected.
+	stale := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-old", Namespace: ns, Labels: map[string]string{"job-name": job.Name},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: "earlier-job",
+				Controller: ptr.To(true)}}},
+		Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "job", Image: testOperatorImage}}},
+	}
+	if err := k8s.Create(context.Background(), stale); err != nil {
+		t.Fatal(err)
+	}
+	stale.Status.Phase = corev1.PodSucceeded
+	stale.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "job", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+		Message: `{"command":"precheck","ok":true,"change":"FreshInstall","message":"stale"}`, FinishedAt: metav1.Now()}}}}
+	if err := k8s.Status().Update(context.Background(), stale); err != nil {
+		t.Fatal(err)
+	}
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, Reason: "PostgreSQLTooOld",
+		Message: "PostgreSQL 14 is too old for Zabbix 8.0 (needs 15 or newer)"})
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked, "PostgreSQL 14 is too old")
+	if getPod(t, ns, "zabbix-server-init-0") != nil {
+		t.Fatal("the stale result of an earlier Job was used")
+	}
 }

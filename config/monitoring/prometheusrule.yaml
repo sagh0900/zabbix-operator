@@ -56,6 +56,14 @@ spec:
             runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabaseprimaryflapping
     - name: zabbix-operator.server
       rules:
+        - alert: ZabbixSystemRunning
+          expr: (zabbix_operator_system_phase{phase="Running"} == 1) and on (namespace, system) (time() - zabbix_operator_hanode_gc_last_success_timestamp_seconds < 600)
+          labels:
+            severity: info
+          annotations:
+            summary: Zabbix system is running
+            description: ZabbixSystem {{ $labels.namespace }}/{{ $labels.system }} is running and its ha-gc check succeeded within the last 10 minutes. This alert fires continuously as a heartbeat; its absence means the system is not running or its maintenance has stopped.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixsystemrunning
         - alert: ZabbixServerNoActiveNode
           expr: (zabbix_operator_server_active_nodes == 0) and on (namespace, system) (zabbix_operator_system_phase{phase=~"Running|Degraded"} == 1)
           for: 2m

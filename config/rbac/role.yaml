@@ -82,6 +82,7 @@ rules:
 - apiGroups:
   - postgresql.cnpg.io
   resources:
+  - backups
   - clusters
   verbs:
   - get

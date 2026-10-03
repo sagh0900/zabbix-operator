@@ -24,6 +24,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/sagh0900/zabbix-operator/internal/jobs"
@@ -78,6 +79,15 @@ func (r *SystemReconciler) runJob(ctx context.Context, spec jobs.Spec) (*jobs.Re
 	return res, nil
 }
 
+// deleteJob removes the Job for spec, so the next runJob starts it again.
+func (r *SystemReconciler) deleteJob(ctx context.Context, spec jobs.Spec) error {
+	job, err := jobs.Build(spec, r.Scheme)
+	if err != nil {
+		return err
+	}
+	return client.IgnoreNotFound(r.Delete(ctx, job, client.PropagationPolicy("Background")))
+}
+
 func jobFinished(job *batchv1.Job) (finished, failed bool, at time.Time) {
 	for _, c := range job.Status.Conditions {
 		if c.Status != corev1.ConditionTrue {
@@ -93,7 +103,9 @@ func jobFinished(job *batchv1.Job) (finished, failed bool, at time.Time) {
 	return false, false, time.Time{}
 }
 
-// jobResult reads the result a Job's pod wrote to its termination message.
+// jobResult reads the result a Job's pod wrote to its termination message. Only pods
+// controlled by this Job count: a Job recreated under the same name must never read a
+// result left by the pods of its predecessor before they are garbage-collected.
 func (r *SystemReconciler) jobResult(ctx context.Context, job *batchv1.Job) (*jobs.Result, error) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(job.Namespace), client.MatchingLabels{"job-name": job.Name}); err != nil {
@@ -102,6 +114,9 @@ func (r *SystemReconciler) jobResult(ctx context.Context, job *batchv1.Job) (*jo
 	var latest *jobs.Result
 	var latestAt time.Time
 	for _, p := range pods.Items {
+		if ref := metav1.GetControllerOf(&p); ref == nil || ref.UID != job.UID {
+			continue
+		}
 		for _, c := range p.Status.ContainerStatuses {
 			t := c.State.Terminated
 			if c.Name != "job" || t == nil || t.Message == "" {

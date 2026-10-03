@@ -30,6 +30,17 @@ const (
 	SystemConflict       = "Conflict"
 )
 
+// UpgradeStep is a step of a schema upgrade.
+// +kubebuilder:validation:Enum="";StoppingServers;ResettingHA;UpgradingSchema
+type UpgradeStep string
+
+// Steps of a schema upgrade, in order.
+const (
+	StepStoppingServers UpgradeStep = "StoppingServers"
+	StepResettingHA     UpgradeStep = "ResettingHA"
+	StepUpgradingSchema UpgradeStep = "UpgradingSchema"
+)
+
 // SystemPhase summarises the state of a ZabbixSystem.
 // +kubebuilder:validation:Enum=Installing;Running;Upgrading;Degraded;Blocked
 type SystemPhase string
@@ -45,12 +56,12 @@ const (
 
 // ZabbixSystemSpec describes one Zabbix installation: server, frontend, web service,
 // proxies and agents, on the database referenced by DatabaseRef.
-// +kubebuilder:validation:XValidation:rule="self.version == oldSelf.version || (int(self.version.split('.')[0]) * 1000000 + int(self.version.split('.')[1]) * 1000 + int(self.version.split('.')[2].find('^[0-9]+'))) >= (int(oldSelf.version.split('.')[0]) * 1000000 + int(oldSelf.version.split('.')[1]) * 1000 + int(oldSelf.version.split('.')[2].find('^[0-9]+')))",message="spec.version cannot be lowered; Zabbix does not support downgrades"
 // +kubebuilder:validation:XValidation:rule="self.databaseRef == oldSelf.databaseRef",message="spec.databaseRef is immutable"
 type ZabbixSystemSpec struct {
 	// Version of Zabbix for server, frontend, web service and proxies, for example 7.0.25
-	// or 8.0.0rc1. A release line this operator version does not support is reported as
-	// Blocked and never deployed.
+	// or 8.0.0rc1. A release line this operator version does not support, or a version
+	// older than the running one, is reported as Blocked and nothing changes; setting the
+	// version back withdraws the request.
 	// +kubebuilder:validation:MaxLength=24
 	// +kubebuilder:validation:Pattern=`^[1-9][0-9]?\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]*)((alpha|beta|rc)[1-9][0-9]*)?$`
 	Version string `json:"version"`
@@ -119,8 +130,8 @@ type UpgradeSettings struct {
 	// +optional
 	ApproveMajor string `json:"approveMajor,omitempty"`
 
-	// RequireBackupWithin makes a major upgrade wait for a completed CNPG Backup of the
-	// cluster that is at most this old.
+	// RequireBackupWithin makes a schema upgrade wait for a completed CNPG Backup of the
+	// cluster that is at most this old. 0s turns the check off.
 	// +kubebuilder:default="24h"
 	// +optional
 	RequireBackupWithin *metav1.Duration `json:"requireBackupWithin,omitempty"`
@@ -289,6 +300,16 @@ type ZabbixSystemStatus struct {
 	// ActiveServer is the server pod Zabbix reports as active.
 	// +optional
 	ActiveServer *ActiveServer `json:"activeServer,omitempty"`
+
+	// UpgradeStep is the current step of a schema upgrade: StoppingServers, ResettingHA or
+	// UpgradingSchema. It is empty otherwise.
+	// +optional
+	UpgradeStep UpgradeStep `json:"upgradeStep,omitempty"`
+
+	// UpgradeTarget is the version a schema upgrade moves to; a change of spec.version
+	// waits until it has finished.
+	// +optional
+	UpgradeTarget string `json:"upgradeTarget,omitempty"`
 
 	// LastHANodeGCTime is when stale ha_node rows were last removed successfully.
 	// +optional

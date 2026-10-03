@@ -41,8 +41,11 @@ import (
 	"github.com/sagh0900/zabbix-operator/internal/metrics"
 )
 
+// cnpgGroup is the API group of CloudNativePG.
+const cnpgGroup = "postgresql.cnpg.io"
+
 // CNPGClusterGVK identifies a CloudNativePG Cluster.
-var CNPGClusterGVK = schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"}
+var CNPGClusterGVK = schema.GroupVersionKind{Group: cnpgGroup, Version: "v1", Kind: "Cluster"}
 
 const (
 	indexClusterRef = ".spec.clusterRef.name"

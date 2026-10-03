@@ -71,3 +71,12 @@ func TestDecide(t *testing.T) {
 		})
 	}
 }
+
+func TestRetryable(t *testing.T) {
+	for reason, want := range map[string]bool{"DatabaseUnreachable": true, "DatabaseError": true, "Configuration": true,
+		"PostgreSQLTooOld": false, "LiveNodes": false, "Downgrade": false, "": false} {
+		if got := (Result{Reason: reason}).Retryable(); got != want {
+			t.Errorf("%q: Retryable = %v, want %v", reason, got, want)
+		}
+	}
+}
