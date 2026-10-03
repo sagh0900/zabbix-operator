@@ -4,7 +4,7 @@ A Kubernetes operator that runs Zabbix (server in native HA, frontend, web servi
 proxies, agents) on a PostgreSQL database managed by
 [CloudNativePG](https://cloudnative-pg.io).
 
-- Two custom resources: `ZabbixDatabase` and `ZabbixSuite`.
+- Two custom resources: `ZabbixDatabase` and `ZabbixSystem`.
 - Zabbix 7.0 LTS and 8.0 LTS, including patch upgrades and the 7.0 → 8.0 upgrade.
 - One image: `ghcr.io/sagh0900/zabbix-operator`.
 

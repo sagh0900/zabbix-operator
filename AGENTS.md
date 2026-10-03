@@ -8,9 +8,9 @@ Instructions for anyone, human or automated, changing this code.
 - [docs/roadmap.md](docs/roadmap.md) lists the planned pull requests while it exists.
 
 ## Rules
-- Two CRDs only: `ZabbixDatabase` and `ZabbixSuite`. Do not add CRDs.
+- Two CRDs only: `ZabbixDatabase` and `ZabbixSystem`. Do not add CRDs.
 - The operator never writes to CNPG objects and never creates database roles.
-- Server, web, web service and proxies are bare Pods owned by the suite; agents are a
+- Server, web, web service and proxies are bare Pods owned by the system; agents are a
   DaemonSet. Do not introduce Deployments or StatefulSets.
 - Supported Zabbix lines are 7.0 and 8.0. Major upgrades require explicit approval.
 - No external leader election for Zabbix server: native HA plus the readiness probe on

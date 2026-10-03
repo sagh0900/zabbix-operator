@@ -66,20 +66,22 @@ writes to CNPG objects. A Warning event is emitted when `Ready` becomes False an
 event when it becomes True. Every SQL statement the operator needs runs inside a short-lived Job
 (see [Jobs](#jobs)).
 
-### ZabbixSuite
+### ZabbixSystem
 
-Describes one Zabbix installation and owns every Kubernetes object for it.
+Describes one Zabbix installation (short name `zsys`) and owns every Kubernetes object for
+it.
 
 ```yaml
 apiVersion: zabbix.io/v1alpha1
-kind: ZabbixSuite
+kind: ZabbixSystem
 metadata:
   name: zabbix
 spec:
   version: "7.0.25"            # Zabbix version for server, web, web service and proxies
   databaseRef:
     name: zabbix-db
-  imageFlavor: ubuntu          # ubuntu | alpine → zabbix/<component>:<flavor>-<version>
+  imageRepository: zabbix      # registry and path prefix, e.g. a mirror
+  imageFlavor: ubuntu          # ubuntu | alpine → <imageRepository>/<component>:<flavor>-<version>
   timezone: Europe/Stockholm
 
   upgrade:
@@ -97,7 +99,7 @@ spec:
     # common pod settings, see below
 
   web:
-    replicas: 2
+    replicas: 2                # 0 disables the frontend
     service: { type: ClusterIP, port: 80 }
     ingress:
       enabled: true
@@ -131,7 +133,7 @@ pod-level settings:
 | Field | Purpose |
 |---|---|
 | `image` | Override the image derived from `version` and `imageFlavor` |
-| `replicas` | Instance count (not for `agent`, which runs one pod per eligible node) |
+| `replicas` | Instance count: server 1–9 (default 2), web and web service 0–20 (default 1, 0 disables), proxies 1–20 (default 1); not for `agent`, which runs one pod per eligible node |
 | `resources` | Container resources |
 | `env`, `envFrom` | Extra environment; operator-managed keys cannot be overridden |
 | `volumes`, `volumeMounts` | Extra mounts, e.g. a patched `zabbix.conf.php` or SAML certificates from a ConfigMap |
@@ -139,8 +141,17 @@ pod-level settings:
 | `nodeSelector`, `tolerations`, `affinity`, `topologySpreadConstraints` | Placement |
 | `podAnnotations`, `podLabels`, `priorityClassName`, `serviceAccountName`, `imagePullSecrets` | Pod metadata and identity |
 | `podSecurityContext`, `securityContext` | Security settings (non-root by default) |
-| `service` | `type`, `port`, `nodePort`, `loadBalancerIP`, `loadBalancerClass`, `loadBalancerSourceRanges`, `externalTrafficPolicy`, `annotations`, `labels` (not for `agent`) |
+| `service` | `type` (`ClusterIP`, `NodePort`, `LoadBalancer`), `port`, `nodePort`, `loadBalancerIP`, `loadBalancerClass`, `loadBalancerSourceRanges`, `externalTrafficPolicy`, `annotations`, `labels` (not for `agent`) |
 | `ingress` | `enabled`, `className`, `annotations`, `labels`, `hosts`, `tls` (`web` and `webService` only) |
+
+Volumes, extra containers, affinity, topology spread constraints and security contexts are
+stored without a schema to keep the CRD small enough for client-side apply; the API server
+validates them when the operator creates the pods, and errors surface as events and
+conditions on the ZabbixSystem.
+
+Validation rejects, at apply time: versions outside the 7.0 and 8.0 lines, lowering
+`version`, changing `databaseRef`, an enabled agent without an image, and enabled proxy
+registration without its references.
 
 Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Blocked`),
 `runningVersion`, `activeServer` (pod name and IP of the active HA node), per-component
@@ -149,7 +160,7 @@ ready counts, and conditions `DatabaseReady`, `ServerActive`, `WebReady`, `Upgra
 
 ## Workloads
 
-The suite controller creates bare Pods for server, web, web service and proxies. It is the
+The system controller creates bare Pods for server, web, web service and proxies. It is the
 only writer of those Pods and performs the work a Deployment or StatefulSet would do:
 keeping the instance count, recreating lost Pods, and rolling Pods when their template
 changes. Agents run as a DaemonSet, because "one pod on every eligible node" is exactly what a
@@ -157,15 +168,15 @@ DaemonSet does and reimplementing it adds risk without benefit.
 
 ### Pod identity and rollout
 
-- Pods have stable names: `<suite>-server-0 … N-1`, `<suite>-web-0 …`,
-  `<suite>-webservice-0 …`, `<proxy>-0 …`. A replaced Pod reuses its name, so Zabbix HA node
+- Pods have stable names: `<system>-server-0 … N-1`, `<system>-web-0 …`,
+  `<system>-webservice-0 …`, `<proxy>-0 …`. A replaced Pod reuses its name, so Zabbix HA node
   names (and proxy hostnames) stay stable across restarts.
 - Each Pod carries a hash of its rendered template. A Pod whose hash differs from the desired
   template is replaced, **one Pod at a time**, waiting for the replacement to be Running (and
   Ready, where readiness is meaningful) before touching the next.
 - Server Pods are rolled standby-first: the active node is replaced last, so a configuration
   change costs one HA failover, not several.
-- All Pods have an owner reference to the suite, so deleting the suite removes them.
+- All Pods have an owner reference to the system, so deleting the system removes them.
 - Because bare Pods are not owned by a controller, `kubectl drain` needs `--force` for nodes
   running them. The operator recreates evicted Pods on another eligible node. Schedule them
   with `affinity`/`topologySpreadConstraints` so replicas land on different nodes.
@@ -180,7 +191,7 @@ The server uses Zabbix native HA. Each server Pod runs the stock image entrypoin
 
 Only the active HA node listens on port 10051; standby nodes run just the HA manager. The
 server Pods therefore have a TCP **readiness** probe on 10051 and no liveness probe on that
-port. The `<suite>-server` Service selects all server Pods, but only the active one is Ready,
+port. The `<system>-server` Service selects all server Pods, but only the active one is Ready,
 so the Service, and any LoadBalancer IP in front of it, always routes to the active node.
 When the active node fails or steps down, its listener closes, its readiness fails within
 seconds and the new active node becomes Ready. Proxies and agents therefore always reach the
@@ -196,28 +207,28 @@ needed.
 - Web Pods do **not** set `ZBX_SERVER_HOST`. The frontend reads the active node's address
   from `ha_node`, which is the only reliable way to reach the active server in HA mode.
 - Web Pods are stateless (sessions live in the database) and scale horizontally behind the
-  `<suite>-web` Service.
+  `<system>-web` Service.
 - The server is pointed at the web service with
-  `ZBX_WEBSERVICEURL=http://<suite>-webservice:10053/report`.
+  `ZBX_WEBSERVICEURL=http://<system>-webservice:10053/report`.
 
 ### Proxies
 
 Each proxy entry produces `replicas` Pods using the `zabbix-proxy-sqlite3` image with an
 `emptyDir` database, so proxies are stateless. Instance `i` uses hostname `<name>-<i>`.
-Active proxies send to the `<suite>-server` Service; passive proxies get a Service each.
+Active proxies send to the `<system>-server` Service; passive proxies get a Service each.
 Registering proxies and proxy groups in Zabbix is done by the user.
 
 ### Agents
 
 When `agent.enabled` is true, a DaemonSet runs agent2 on every node matching the agent's
-placement settings, with the node name as hostname and the `<suite>-server` Service as
+placement settings, with the node name as hostname and the `<system>-server` Service as
 server address. The agent image is set explicitly because agents are versioned
 independently of the server.
 
 ### Exposure
 
-Every component except the agent gets one Service, named `<suite>-server`, `<suite>-web`,
-`<suite>-webservice` and `<proxy>` (passive proxies only), shaped by the component's
+Every component except the agent gets one Service, named `<system>-server`, `<system>-web`,
+`<system>-webservice` and `<proxy>` (passive proxies only), shaped by the component's
 `service` settings. `web` and `webService` can also get an Ingress. The server has no
 Ingress setting: Zabbix trapper traffic on 10051 is a raw TCP protocol, and Kubernetes
 Ingress only routes HTTP. Expose it with the Service (`LoadBalancer` or `NodePort`) and
@@ -229,7 +240,7 @@ only overwrites the keys it manages (selectors and the owner labels).
 ### Conflicts
 
 The operator only manages objects that carry its owner reference. If a Service or Pod with
-a name it needs already exists and is not owned by the suite, the suite reports
+a name it needs already exists and is not owned by the system, the system reports
 `Conflict=True` naming the object and leaves it untouched. This makes adoption from an
 existing deployment explicit and safe.
 
@@ -239,9 +250,9 @@ The operator never disrupts the database and never stops Zabbix because of it.
 
 - While `ZabbixDatabase` is not `Ready` (CNPG switchover, failover, a PostgreSQL upgrade,
   a lost quorum), running server pods are left alone. Zabbix reconnects by itself, and
-  stopping it would only lose buffered data. The suite reports `DatabaseReady=False`,
+  stopping it would only lose buffered data. The system reports `DatabaseReady=False`,
   starts nothing new and runs no upgrade step.
-- When the database is back, the suite checks that a server node is active again. If
+- When the database is back, the system checks that a server node is active again. If
   none becomes active within a grace period, it replaces server pods one at a time,
   standby first.
 
@@ -251,12 +262,12 @@ Every Zabbix line has a minimum PostgreSQL major version (8.0 requires 15). The 
 Job reads `server_version_num` from the database. If the target version is not supported:
 
 - the upgrade does not start and the running version keeps running unchanged;
-- the suite sets `UpgradeBlocked=True` with reason `PostgreSQLTooOld` and a message naming
+- the system sets `UpgradeBlocked=True` with reason `PostgreSQLTooOld` and a message naming
   the current and required versions, and emits a Warning event with the same text;
 - the operator re-checks periodically and after every change of the CNPG cluster. Once the
   user has upgraded PostgreSQL through CNPG, the approved upgrade continues by itself.
 
-The same check runs at install time, so a new suite on an unsupported PostgreSQL version
+The same check runs at install time, so a new system on an unsupported PostgreSQL version
 is reported instead of started.
 
 ## `ha_node` maintenance
@@ -264,7 +275,7 @@ is reported instead of started.
 Zabbix keeps one `ha_node` row per HA node name. Becoming active or standby only changes
 the row's status; it does not add rows. Because server pods have stable names, a restarted
 or replaced pod reuses its own row. Rows are left behind only by names that no longer run:
-scaling down, renaming the suite, or nodes from a previous deployment. The operator removes
+scaling down, renaming the system, or nodes from a previous deployment. The operator removes
 them with a timed maintenance Job (`ha-gc`, below), and resets the table before the
 standalone step of a major upgrade.
 
@@ -279,7 +290,7 @@ proxyRegistration:
   enabled: true
   apiTokenSecretRef: { name: zabbix-api-token, key: token }
   configMapRef: { name: zabbix-proxies, key: proxies.yaml }
-  prune: false                 # true: delete proxies this suite registered that the list no longer contains
+  prune: false                 # true: delete proxies this system registered that the list no longer contains
 ```
 
 ```yaml
@@ -296,7 +307,7 @@ proxyRegistration:
 ```
 
 In-cluster proxies from `spec.proxies` are registered the same way. The operator only
-updates or deletes proxies it registered, recorded in the suite status, so proxies managed
+updates or deletes proxies it registered, recorded in the system status, so proxies managed
 by hand are never touched. Encryption settings are left to Zabbix.
 
 ## Jobs
@@ -321,7 +332,7 @@ Job has an owner reference, a deterministic name and a TTL.
    one after another.
 4. Start web, web service, proxies and agents.
 
-An existing schema is detected and never re-created, so pointing a new suite at a populated
+An existing schema is detected and never re-created, so pointing a new system at a populated
 database is safe.
 
 ### Patch upgrade (7.0.x → 7.0.y, 8.0.x → 8.0.y)
@@ -376,15 +387,15 @@ ClusterRole. A `zabbix-operator-metrics` Service exposes the port.
 
 ### Metrics
 
-All series carry `namespace` and the owning resource name (`database` or `suite`).
+All series carry `namespace` and the owning resource name (`database` or `system`).
 
 | Metric | Type | Meaning |
 |---|---|---|
 | `zabbix_operator_database_ready` | gauge | 1 when the ZabbixDatabase is `Ready` |
 | `zabbix_operator_database_condition` | gauge | 1 per `condition` and `status` (`ClusterReady`, `CredentialsReady`, `PrimaryStable`) |
 | `zabbix_operator_database_primary_changes_total` | counter | Primary changes observed |
-| `zabbix_operator_suite_phase` | gauge | 1 for the current `phase` of the suite |
-| `zabbix_operator_suite_info` | gauge | Always 1; labels `version` and `running_version` |
+| `zabbix_operator_system_phase` | gauge | 1 for the current `phase` of the system |
+| `zabbix_operator_system_info` | gauge | Always 1; labels `version` and `running_version` |
 | `zabbix_operator_component_pods_desired` | gauge | Desired pods per `component` (`server`, `web`, `webservice`, `proxy/<name>`) |
 | `zabbix_operator_component_pods_ready` | gauge | Ready pods per `component` (server: running pods, since standby nodes are never Ready) |
 | `zabbix_operator_pod_replacements_total` | counter | Pods the operator recreated, per `component` and `reason` (`lost`, `evicted`, `rollout`) |
@@ -418,15 +429,15 @@ are exported as well.
 | lifecycle | `ZabbixUpgradeBlocked` | An upgrade is blocked for 30m (with the reason) |
 | lifecycle | `ZabbixUpgradeStuck` | An upgrade runs for longer than 2h |
 | lifecycle | `ZabbixOperatorJobFailing` | A Job failed twice in 1h |
-| lifecycle | `ZabbixHANodeGCStale` | No successful `ha-gc` for 30m while the suite is `Running` |
+| lifecycle | `ZabbixHANodeGCStale` | No successful `ha-gc` for 30m while the system is `Running` |
 | agent | `ZabbixAgentNodesMissing` | Agents ready on fewer nodes than desired for 15m |
 
 Thresholds are rule parameters that can be adjusted with a kustomize patch.
 
 ### Dashboard
 
-One Grafana dashboard, `Zabbix Operator`, with a namespace and suite selector: database
-readiness and primary changes, suite phase and version, pods desired versus ready per
+One Grafana dashboard, `Zabbix Operator`, with a namespace and system selector: database
+readiness and primary changes, system phase and version, pods desired versus ready per
 component, active server node and failovers, pod replacements, upgrade and Job status,
 `ha_node` GC, agent coverage (shown only when agent metrics exist), and operator health.
 It is published as plain JSON and as a ConfigMap labelled `grafana_dashboard: "1"` for the
