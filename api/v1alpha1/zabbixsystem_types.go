@@ -290,6 +290,10 @@ type ZabbixSystemStatus struct {
 	// +optional
 	ActiveServer *ActiveServer `json:"activeServer,omitempty"`
 
+	// LastHANodeGCTime is when stale ha_node rows were last removed successfully.
+	// +optional
+	LastHANodeGCTime *metav1.Time `json:"lastHANodeGCTime,omitempty"`
+
 	// Components reports desired and ready pods per component.
 	// +listType=map
 	// +listMapKey=name

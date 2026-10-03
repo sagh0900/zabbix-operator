@@ -35,7 +35,12 @@ var (
 func exported(t *testing.T) map[string]bool {
 	t.Helper()
 	names := map[string]bool{}
-	for _, c := range []prometheus.Collector{DatabaseReady, DatabaseCondition, DatabasePrimaryChanges} {
+	collectors := make([]prometheus.Collector, 0, 3+len(systemCollectors))
+	collectors = append(collectors, DatabaseReady, DatabaseCondition, DatabasePrimaryChanges)
+	for _, c := range systemCollectors {
+		collectors = append(collectors, c)
+	}
+	for _, c := range collectors {
 		ch := make(chan *prometheus.Desc, 1)
 		c.Describe(ch)
 		close(ch)
@@ -87,5 +92,32 @@ func TestSetDatabaseConditionKeepsOneSeriesActive(t *testing.T) {
 	DeleteDatabase("ns", "db")
 	if n := testutil.CollectAndCount(DatabaseCondition); n != 0 {
 		t.Errorf("%d series left after DeleteDatabase", n)
+	}
+}
+
+func TestSystemHelpers(t *testing.T) {
+	SetSystemPhase("ns", "zabbix", "Running")
+	SetSystemPhase("ns", "zabbix", "Upgrading")
+	for phase, want := range map[string]float64{"Running": 0, "Upgrading": 1, "Blocked": 0} {
+		if got := testutil.ToFloat64(SystemPhase.WithLabelValues("ns", "zabbix", phase)); got != want {
+			t.Errorf("phase %s = %v, want %v", phase, got, want)
+		}
+	}
+	SetSystemInfo("ns", "zabbix", "8.0.0rc1", "7.0.25")
+	SetSystemInfo("ns", "zabbix", "8.0.0rc1", "8.0.0rc1")
+	if n := testutil.CollectAndCount(SystemInfo); n != 1 {
+		t.Errorf("%d info series, want 1", n)
+	}
+	SetUpgradeBlocked("ns", "zabbix", "PostgreSQLTooOld")
+	SetUpgradeBlocked("ns", "zabbix", "")
+	if n := testutil.CollectAndCount(UpgradeBlocked); n != 0 {
+		t.Errorf("%d blocked series after clearing", n)
+	}
+	ServerActiveNodes.WithLabelValues("ns", "zabbix").Set(1)
+	DeleteSystem("ns", "zabbix")
+	for _, c := range systemCollectors {
+		if n := testutil.CollectAndCount(c); n != 0 {
+			t.Errorf("series left after DeleteSystem")
+		}
 	}
 }

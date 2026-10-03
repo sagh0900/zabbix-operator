@@ -101,3 +101,169 @@ tests:
               summary: Zabbix database primary is flapping
               description: The primary of zabbix/zabbix-db keeps changing.
               runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabaseprimaryflapping
+
+  - name: no active server node, but not during an upgrade
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_server_active_nodes{namespace="zabbix",system="zabbix"}'
+        values: '1x3 0x10'
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="zabbix",phase="Running"}'
+        values: '1x13'
+      - series: 'zabbix_operator_server_active_nodes{namespace="zabbix",system="upgrading"}'
+        values: '0x13'
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="upgrading",phase="Running"}'
+        values: '0x13'
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="upgrading",phase="Upgrading"}'
+        values: '1x13'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ZabbixServerNoActiveNode
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: ZabbixServerNoActiveNode
+        exp_alerts:
+          - exp_labels: { severity: critical, namespace: zabbix, system: zabbix }
+            exp_annotations:
+              summary: No active Zabbix server node
+              description: ZabbixSystem zabbix/zabbix has had no active server node for 2 minutes; proxies and agents cannot deliver data.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixservernoactivenode
+
+  - name: failover storm
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_server_failovers_total{namespace="zabbix",system="zabbix"}'
+        values: '0+1x6'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ZabbixServerFailoverStorm
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ZabbixServerFailoverStorm
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix }
+            exp_annotations:
+              summary: Zabbix server keeps failing over
+              description: The active server of zabbix/zabbix changed more than 3 times in 30 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixserverfailoverstorm
+
+  - name: component degraded
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_component_pods_ready{namespace="zabbix",system="zabbix",component="web"}'
+        values: '2x3 1x15'
+      - series: 'zabbix_operator_component_pods_desired{namespace="zabbix",system="zabbix",component="web"}'
+        values: '2x18'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ZabbixComponentDegraded
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ZabbixComponentDegraded
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix, component: web }
+            exp_annotations:
+              summary: Zabbix component has fewer ready pods than desired
+              description: Component web of zabbix/zabbix has had fewer ready pods than desired for 10 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixcomponentdegraded
+
+  - name: failing pods
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_pod_replacements_total{namespace="zabbix",system="zabbix",component="web",reason="failed"}'
+        values: '0+2x10'
+      - series: 'zabbix_operator_pod_replacements_total{namespace="zabbix",system="zabbix",component="server",reason="rollout"}'
+        values: '0+5x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ZabbixPodReplacementsHigh
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ZabbixPodReplacementsHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix, component: web, reason: failed }
+            exp_annotations:
+              summary: Zabbix pods keep failing
+              description: More than 5 failed web pods of zabbix/zabbix were replaced in 30 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixpodreplacementshigh
+
+  - name: upgrade blocked
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_upgrade_blocked{namespace="zabbix",system="zabbix",reason="PostgreSQLTooOld"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ZabbixUpgradeBlocked
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: ZabbixUpgradeBlocked
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix, reason: PostgreSQLTooOld }
+            exp_annotations:
+              summary: Zabbix install or upgrade is blocked
+              description: ZabbixSystem zabbix/zabbix has been blocked for 30 minutes (PostgreSQLTooOld); kubectl get zsys shows why.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixupgradeblocked
+
+  - name: upgrade stuck
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_upgrade_in_progress{namespace="zabbix",system="zabbix"}'
+        values: '1x130'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: ZabbixUpgradeStuck
+        exp_alerts: []
+      - eval_time: 125m
+        alertname: ZabbixUpgradeStuck
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix }
+            exp_annotations:
+              summary: Zabbix upgrade is taking long
+              description: ZabbixSystem zabbix/zabbix has been upgrading for more than 2 hours.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixupgradestuck
+
+  - name: job failing
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_job_runs_total{namespace="zabbix",system="zabbix",job="ha-gc",result="failed"}'
+        values: '0 0 1 1 2 2 2'
+      - series: 'zabbix_operator_job_runs_total{namespace="zabbix",system="zabbix",job="ha-gc",result="succeeded"}'
+        values: '0+3x6'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ZabbixOperatorJobFailing
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ZabbixOperatorJobFailing
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix, job: ha-gc, result: failed }
+            exp_annotations:
+              summary: Zabbix operator Job keeps failing
+              description: The ha-gc Job of zabbix/zabbix failed at least twice in an hour.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatorjobfailing
+
+  - name: ha-gc stale only while running
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_hanode_gc_last_success_timestamp_seconds{namespace="zabbix",system="zabbix"}'
+        values: '600x50'
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="zabbix",phase="Running"}'
+        values: '1x50'
+      - series: 'zabbix_operator_hanode_gc_last_success_timestamp_seconds{namespace="zabbix",system="upgrading"}'
+        values: '600x50'
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="upgrading",phase="Running"}'
+        values: '0x50'
+      - series: 'zabbix_operator_system_phase{namespace="zabbix",system="upgrading",phase="Upgrading"}'
+        values: '1x50'
+    alert_rule_test:
+      - eval_time: 42m
+        alertname: ZabbixHANodeGCStale
+        exp_alerts: []
+      - eval_time: 46m
+        alertname: ZabbixHANodeGCStale
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix }
+            exp_annotations:
+              summary: Stale ha_node rows are not being removed
+              description: ha-gc has not succeeded for 30 minutes on zabbix/zabbix.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixhanodegcstale

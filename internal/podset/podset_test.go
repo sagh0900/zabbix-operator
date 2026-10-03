@@ -449,3 +449,28 @@ func TestTerminatingUnwantedPodIsReported(t *testing.T) {
 		t.Fatalf("status %+v after the pod is gone", st)
 	}
 }
+
+func TestDeletionsAreReportedWithReasons(t *testing.T) {
+	h := newHarness(t)
+	h.reconcile(h.set("a", "zabbix-server-0", "zabbix-server-1", "zabbix-server-2"))
+	h.run("zabbix-server-0", "zabbix-server-1", "zabbix-server-2")
+
+	st := h.reconcile(h.set("a", "zabbix-server-0", "zabbix-server-1"))
+	if len(st.Deleted) != 1 || st.Deleted[0] != (Deletion{"zabbix-server-2", DeletedScaleDown}) {
+		t.Errorf("scale-down: %+v", st.Deleted)
+	}
+	st = h.reconcile(h.set("b", "zabbix-server-0", "zabbix-server-1"))
+	if len(st.Deleted) != 1 || st.Deleted[0].Reason != DeletedRollout {
+		t.Errorf("rollout: %+v", st.Deleted)
+	}
+	h.reconcile(h.set("b", "zabbix-server-0", "zabbix-server-1"))
+	p := h.pod("zabbix-server-1")
+	p.Status.Phase, p.Status.Reason = corev1.PodFailed, "Evicted"
+	if err := h.c.Status().Update(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	st = h.reconcile(h.set("b", "zabbix-server-0", "zabbix-server-1"))
+	if len(st.Deleted) != 1 || st.Deleted[0] != (Deletion{"zabbix-server-1", DeletedFailed}) {
+		t.Errorf("failed: %+v", st.Deleted)
+	}
+}

@@ -89,7 +89,28 @@ type Status struct {
 	Action string
 	// Converged is true when every member exists, is current and is healthy.
 	Converged bool
+	// Deleted lists the pods this pass deleted, with the reason.
+	Deleted []Deletion
 }
+
+// Deletion is a pod the set deleted.
+type Deletion struct {
+	Pod    string
+	Reason DeletionReason
+}
+
+// DeletionReason says why a pod was deleted.
+type DeletionReason string
+
+// Reasons for deleting a pod.
+const (
+	// DeletedRollout: the pod ran an outdated template.
+	DeletedRollout DeletionReason = "rollout"
+	// DeletedFailed: the pod failed, for example it was evicted.
+	DeletedFailed DeletionReason = "failed"
+	// DeletedScaleDown: the pod is no longer a member.
+	DeletedScaleDown DeletionReason = "scaledown"
+)
 
 // Manager reconciles pod sets.
 type Manager struct {
@@ -120,7 +141,7 @@ func (m *Manager) Reconcile(ctx context.Context, set Set) (Status, error) {
 	if err != nil {
 		return st, err
 	}
-	actions, err := m.removeUnwanted(ctx, set, owned)
+	actions, err := m.removeUnwanted(ctx, set, owned, &st)
 	if err != nil {
 		return st, err
 	}
@@ -157,7 +178,7 @@ func (m *Manager) Reconcile(ctx context.Context, set Set) (Status, error) {
 		st.Action = joinActions(actions)
 		return st, nil
 	}
-	if st.Action, err = m.rollOne(ctx, members); err != nil || st.Action != "" {
+	if st.Action, err = m.rollOne(ctx, members, &st); err != nil || st.Action != "" {
 		return st, err
 	}
 	st.Converged = len(st.Conflicts) == 0
@@ -183,7 +204,7 @@ func (m *Manager) ownedPods(ctx context.Context, set Set) (map[string]*corev1.Po
 // removeUnwanted deletes failed pods and, unless the set is on hold, pods that are no
 // longer members. A pod that is no longer a member and is still terminating is reported,
 // so callers can wait until it is really gone.
-func (m *Manager) removeUnwanted(ctx context.Context, set Set, owned map[string]*corev1.Pod) ([]string, error) {
+func (m *Manager) removeUnwanted(ctx context.Context, set Set, owned map[string]*corev1.Pod, st *Status) ([]string, error) {
 	wanted := map[string]bool{}
 	for _, mem := range set.Members {
 		wanted[mem.Template.Name] = true
@@ -191,6 +212,7 @@ func (m *Manager) removeUnwanted(ctx context.Context, set Set, owned map[string]
 	var actions []string
 	for name, p := range owned {
 		var why string
+		var reason DeletionReason
 		switch {
 		case p.DeletionTimestamp != nil && !wanted[name]:
 			actions = append(actions, fmt.Sprintf("waiting for %s to terminate", name))
@@ -198,15 +220,16 @@ func (m *Manager) removeUnwanted(ctx context.Context, set Set, owned map[string]
 		case p.DeletionTimestamp != nil:
 			continue
 		case !wanted[name] && set.Hold == "":
-			why = "no longer desired"
+			why, reason = "no longer desired", DeletedScaleDown
 		case p.Status.Phase == corev1.PodFailed || p.Status.Phase == corev1.PodSucceeded:
-			why = terminalReason(p)
+			why, reason = terminalReason(p), DeletedFailed
 		default:
 			continue
 		}
 		if err := m.delete(ctx, p); err != nil {
 			return nil, err
 		}
+		st.Deleted = append(st.Deleted, Deletion{Pod: name, Reason: reason})
 		actions = append(actions, fmt.Sprintf("deleting %s (%s)", name, why))
 	}
 	return actions, nil
@@ -262,7 +285,7 @@ func (m *Manager) createMissing(ctx context.Context, set Set, members []observed
 
 // rollOne replaces at most one outdated member, and only while every other member is
 // healthy. It returns what it did or is waiting for; empty means nothing is left to do.
-func (m *Manager) rollOne(ctx context.Context, members []observed) (string, error) {
+func (m *Manager) rollOne(ctx context.Context, members []observed, st *Status) (string, error) {
 	var outdated []observed
 	for _, o := range members {
 		if o.pod == nil {
@@ -303,6 +326,7 @@ func (m *Manager) rollOne(ctx context.Context, members []observed) (string, erro
 	if err := m.delete(ctx, next.pod); err != nil {
 		return "", err
 	}
+	st.Deleted = append(st.Deleted, Deletion{Pod: next.member.Template.Name, Reason: DeletedRollout})
 	return fmt.Sprintf("replacing %s (template changed); %d outdated",
 		next.member.Template.Name, len(outdated)), nil
 }
