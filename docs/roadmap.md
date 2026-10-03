@@ -7,8 +7,8 @@ build, pass tests and leave `main` releasable. Remove this file once v0.1.0 is r
 
 | # | Branch | Content |
 |---|---|---|
-| 1 | `ci/pipeline` | GitHub Actions: lint, unit and envtest on every pull request; on a `v*` tag, build multi-arch, push to ghcr.io, publish a GitHub release with `install.yaml` |
-| 2 | `feat/database` | `ZabbixDatabase` API and controller, envtest CNPG CRDs, `config/` manifests |
+| 1 | `ci/pipeline` | GitHub Actions: lint, tests and a multi-arch image build on every pull request; on a `v*` tag, push the image to ghcr.io and publish a GitHub release |
+| 2 | `feat/database` | `ZabbixDatabase` API and controller, envtest CNPG CRDs, `config/` manifests, `install.yaml` attached to releases |
 | 3 | `feat/suite-api` | `ZabbixSuite` API: shared pod, service and ingress settings, CEL validation (version pattern, supported lines, no downgrade) |
 | 4 | `feat/podset` | `internal/podset`: render, hash, create, replace one at a time, recreate lost pods, conflict detection |
 | 5 | `feat/jobs` | Job subcommands `precheck`, `ha-reset`, `ha-gc` in the manager binary |
