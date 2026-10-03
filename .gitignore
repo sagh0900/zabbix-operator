@@ -1,0 +1,16 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local, never committed
+.plan/
+.claude/
+CLAUDE.md
