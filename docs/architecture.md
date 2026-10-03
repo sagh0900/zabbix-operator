@@ -362,6 +362,87 @@ A change to a component's spec changes its Pod template hash and triggers the ro
 replacement described above. A change to a referenced Secret or ConfigMap does too, through
 a hash of the referenced data recorded on the Pod.
 
+## Observability
+
+The operator exports Prometheus metrics, and the project ships alerting rules and a Grafana
+dashboard built on them. Everything is optional to install and needs only the Prometheus
+Operator CRDs (`ServiceMonitor`, `PrometheusRule`) where it is used.
+
+### Metrics endpoint
+
+The manager serves metrics over HTTPS on port 8443, protected by Kubernetes authentication
+and authorization: a scraper needs a token bound to the `zabbix-operator-metrics-reader`
+ClusterRole. A `zabbix-operator-metrics` Service exposes the port.
+
+### Metrics
+
+All series carry `namespace` and the owning resource name (`database` or `suite`).
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `zabbix_operator_database_ready` | gauge | 1 when the ZabbixDatabase is `Ready` |
+| `zabbix_operator_database_condition` | gauge | 1 per `condition` and `status` (`ClusterReady`, `CredentialsReady`, `PrimaryStable`) |
+| `zabbix_operator_database_primary_changes_total` | counter | Primary changes observed |
+| `zabbix_operator_suite_phase` | gauge | 1 for the current `phase` of the suite |
+| `zabbix_operator_suite_info` | gauge | Always 1; labels `version` and `running_version` |
+| `zabbix_operator_component_pods_desired` | gauge | Desired pods per `component` (`server`, `web`, `webservice`, `proxy/<name>`) |
+| `zabbix_operator_component_pods_ready` | gauge | Ready pods per `component` (server: running pods, since standby nodes are never Ready) |
+| `zabbix_operator_pod_replacements_total` | counter | Pods the operator recreated, per `component` and `reason` (`lost`, `evicted`, `rollout`) |
+| `zabbix_operator_server_active_nodes` | gauge | Server pods currently routed as active (expected 1) |
+| `zabbix_operator_server_failovers_total` | counter | Changes of the active server pod |
+| `zabbix_operator_upgrade_in_progress` | gauge | 1 while an upgrade runs |
+| `zabbix_operator_upgrade_blocked` | gauge | 1 per blocking `reason` |
+| `zabbix_operator_job_runs_total` | counter | Operator Jobs per `job` and `result` (`succeeded`, `failed`) |
+| `zabbix_operator_hanode_gc_rows_deleted_total` | counter | Stale `ha_node` rows removed |
+| `zabbix_operator_hanode_gc_last_success_timestamp_seconds` | gauge | Time of the last successful `ha-gc` run |
+| `zabbix_operator_agent_nodes_desired` | gauge | Nodes that should run an agent (only when the agent is enabled) |
+| `zabbix_operator_agent_nodes_ready` | gauge | Nodes with a ready agent (only when the agent is enabled) |
+
+The controller-runtime metrics (reconcile counts, errors and durations, work-queue depth)
+are exported as well.
+
+### Alerts
+
+`PrometheusRule` groups, each installable on its own:
+
+| Group | Alert | Fires when |
+|---|---|---|
+| operator | `ZabbixOperatorDown` | No operator target is up for 5m |
+| operator | `ZabbixOperatorReconcileErrors` | Reconcile errors persist for 15m |
+| database | `ZabbixDatabaseNotReady` | `database_ready == 0` for 5m (critical after 15m) |
+| database | `ZabbixDatabasePrimaryFlapping` | `PrimaryStable` False for 10m |
+| server | `ZabbixServerNoActiveNode` | `server_active_nodes == 0` for 2m (critical) |
+| server | `ZabbixServerFailoverStorm` | More than 3 failovers in 30m |
+| workloads | `ZabbixComponentDegraded` | Ready pods below desired for 10m |
+| workloads | `ZabbixPodReplacementsHigh` | More than 5 replacements of a component in 30m |
+| lifecycle | `ZabbixUpgradeBlocked` | An upgrade is blocked for 30m (with the reason) |
+| lifecycle | `ZabbixUpgradeStuck` | An upgrade runs for longer than 2h |
+| lifecycle | `ZabbixOperatorJobFailing` | A Job failed twice in 1h |
+| lifecycle | `ZabbixHANodeGCStale` | No successful `ha-gc` for 30m while the suite is `Running` |
+| agent | `ZabbixAgentNodesMissing` | Agents ready on fewer nodes than desired for 15m |
+
+Thresholds are rule parameters that can be adjusted with a kustomize patch.
+
+### Dashboard
+
+One Grafana dashboard, `Zabbix Operator`, with a namespace and suite selector: database
+readiness and primary changes, suite phase and version, pods desired versus ready per
+component, active server node and failovers, pod replacements, upgrade and Job status,
+`ha_node` GC, agent coverage (shown only when agent metrics exist), and operator health.
+It is published as plain JSON and as a ConfigMap labelled `grafana_dashboard: "1"` for the
+Grafana sidecar.
+
+### Packaging
+
+| Release asset | Contents |
+|---|---|
+| `install.yaml` | Operator, CRDs, RBAC, metrics Service |
+| `monitoring.yaml` | `ServiceMonitor`, `PrometheusRule`, metrics-reader binding for Prometheus, dashboard ConfigMap |
+| `dashboard.json` | The dashboard for any other provisioning method |
+
+`config/monitoring` is a kustomize base; overlays add the labels a Prometheus instance
+selects on (for example `release: <prometheus release>`).
+
 ## Images
 
 | Image | Contents |
