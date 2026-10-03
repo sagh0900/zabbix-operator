@@ -48,10 +48,11 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.version == oldSelf.version || (int(self.version.split('.')[0]) * 1000000 + int(self.version.split('.')[1]) * 1000 + int(self.version.split('.')[2].find('^[0-9]+'))) >= (int(oldSelf.version.split('.')[0]) * 1000000 + int(oldSelf.version.split('.')[1]) * 1000 + int(oldSelf.version.split('.')[2].find('^[0-9]+')))",message="spec.version cannot be lowered; Zabbix does not support downgrades"
 // +kubebuilder:validation:XValidation:rule="self.databaseRef == oldSelf.databaseRef",message="spec.databaseRef is immutable"
 type ZabbixSystemSpec struct {
-	// Version of Zabbix for server, frontend, web service and proxies. Supported lines
-	// are 7.0 and 8.0, for example 7.0.25 or 8.0.0rc1.
+	// Version of Zabbix for server, frontend, web service and proxies, for example 7.0.25
+	// or 8.0.0rc1. A release line this operator version does not support is reported as
+	// Blocked and never deployed.
 	// +kubebuilder:validation:MaxLength=24
-	// +kubebuilder:validation:Pattern=`^(7\.0|8\.0)\.(0|[1-9][0-9]*)((alpha|beta|rc)[1-9][0-9]*)?$`
+	// +kubebuilder:validation:Pattern=`^[1-9][0-9]?\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]*)((alpha|beta|rc)[1-9][0-9]*)?$`
 	Version string `json:"version"`
 
 	// DatabaseRef names the ZabbixDatabase in the same namespace.
@@ -108,7 +109,7 @@ type ZabbixSystemSpec struct {
 type UpgradeSettings struct {
 	// ApproveMajor approves one major upgrade when it equals the target line (for
 	// example "8.0"). A major upgrade is irreversible without a database restore.
-	// +kubebuilder:validation:Pattern=`^(8\.0)?$`
+	// +kubebuilder:validation:Pattern=`^([1-9][0-9]?\.(0|[1-9][0-9]?))?$`
 	// +optional
 	ApproveMajor string `json:"approveMajor,omitempty"`
 

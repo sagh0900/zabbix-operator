@@ -41,6 +41,19 @@ jobs:
       - name: Check generated files and formatting are committed
         run: git diff --exit-code
 
+  database:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["14", "15", "17"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: make test-db PG_VERSIONS=${{ matrix.postgres }}
+
   image:
     runs-on: ubuntu-latest
     steps:

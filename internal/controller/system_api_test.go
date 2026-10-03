@@ -101,14 +101,16 @@ func TestSystemAPI_Defaults(t *testing.T) {
 func TestSystemAPI_Version(t *testing.T) {
 	requireEnvtest(t)
 	ns := newNamespace(t)
-	for i, v := range []string{"7.0.0", "7.0.1", "7.0.25", "8.0.0", "8.0.0rc1", "8.0.12", "8.0.1beta2"} {
+	// Any well-formed version is accepted; unsupported release lines are reported as
+	// Blocked at runtime rather than rejected here.
+	for i, v := range []string{"7.0.0", "7.0.1", "7.0.25", "8.0.0", "8.0.0rc1", "8.0.12", "8.0.1beta2", "9.0.0", "7.4.0", "6.0.30"} {
 		sys := newSystem(ns, v)
 		sys.Name = "ok-" + string(rune('a'+i))
 		if err := k8s.Create(context.Background(), sys); err != nil {
 			t.Errorf("version %s rejected: %v", v, err)
 		}
 	}
-	for i, v := range []string{"7.4.0", "6.0.30", "7.0", "7.0.01", "8.0.0-rc1", "9.0.0", "v7.0.1", "7.0.1rc"} {
+	for i, v := range []string{"7.0", "7.0.01", "8.0.0-rc1", "v7.0.1", "7.0.1rc", "07.0.1", "7.00.1", ""} {
 		sys := newSystem(ns, v)
 		sys.Name = "bad-" + string(rune('a'+i))
 		expectRejected(t, k8s.Create(context.Background(), sys), "spec.version")
@@ -174,7 +176,7 @@ func TestSystemAPI_FieldRules(t *testing.T) {
 			s.Agent.Enabled, s.Agent.Image = true, "zabbix/zabbix-agent2:ubuntu-7.0.25"
 		}, ""},
 		{"registration needs refs", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.ProxyRegistration.Enabled = true }, "apiTokenSecretRef and configMapRef"},
-		{"approveMajor must be a line", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "7.4" }, "spec.upgrade.approveMajor"},
+		{"approveMajor must be a line", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "8.0.0" }, "spec.upgrade.approveMajor"},
 		{"approveMajor 8.0", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "8.0" }, ""},
 		{"duplicate proxy names", func(s *zabbixv1alpha1.ZabbixSystemSpec) {
 			s.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "dc1"}, {Name: "dc1"}}

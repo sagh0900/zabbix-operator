@@ -16,7 +16,10 @@ user and are only *referenced*.
 | Services and Ingresses for the components | |
 | Optional registration of proxies in Zabbix | |
 
-Supported Zabbix lines: **7.0 LTS** and **8.0 LTS**. Other lines are rejected by validation.
+Supported Zabbix lines: **7.0 LTS** and **8.0 LTS**. Any patch release of a supported line
+works without an operator change. A ZabbixSystem asking for another line is accepted by the
+API and reported as `Blocked` ("Zabbix 9.0 is not supported by this operator version"),
+and nothing is deployed for it.
 
 ## Custom resources
 
@@ -168,8 +171,8 @@ stored without a schema to keep the CRD small enough for client-side apply; the 
 validates them when the operator creates the pods, and errors surface as events and
 conditions on the ZabbixSystem.
 
-Validation rejects, at apply time: versions outside the 7.0 and 8.0 lines, lowering
-`version`, changing `databaseRef`, an enabled agent without an image, and enabled proxy
+Validation rejects, at apply time: a malformed version, lowering `version`, changing
+`databaseRef`, an enabled agent without an image, and enabled proxy
 registration without its references.
 
 Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Blocked`) with a
@@ -223,13 +226,36 @@ DaemonSet does and reimplementing it adds risk without benefit.
 - While the database is not `Ready`, or an upgrade step owns the Pods, rolling is put on
   hold: nothing is created, replaced or scaled down, and `phaseReason` says why.
 
+### Schema versions
+
+The `dbversion.mandatory` value of the database decides compatibility; patch releases of a
+line share it and differ only in optional patches, which a newer server applies while it
+runs. The operator converts it to a schema level: 7000000 → 700 (7.0), 7040000 → 704,
+7050195 → 705 (the development series that 8.0 release candidates run), 8000000 → 800.
+Moving a database to a version with the same level rolls servers one at a time; a higher
+level is a schema upgrade with all servers stopped; a lower level is refused.
+
 ### Server and HA routing
 
 The server uses Zabbix native HA. Each server Pod runs the stock image entrypoint with:
 
 - `ZBX_HANODENAME` = Pod name (stable), `ZBX_NODEADDRESS` = Pod IP;
 - database settings from the referenced `ZabbixDatabase` (host, port, name, credentials, TLS);
-- the user's `env` (all `ZBX_*` tuning is honoured by the entrypoint).
+- the user's `env` and `envFrom` (all `ZBX_*` tuning is honoured by the entrypoint).
+
+Tuning that changes with load, such as pollers and cache sizes, belongs in a ConfigMap or
+Secret referenced through `envFrom`, so it is changed without editing the ZabbixSystem:
+
+```yaml
+server:
+  envFrom:
+    - secretRef: { name: zabbix-server-tuning }   # ZBX_STARTPOLLERS, ZBX_CACHESIZE, ...
+```
+
+Every component accepts `env` and `envFrom`. Variables the operator manages (database
+connection, HA node name and address) always win. The operator records a hash of every
+referenced ConfigMap and Secret on the Pods, so changing the tuning Secret rolls the
+servers one at a time, standby first.
 
 Only the active HA node listens on port 10051; standby nodes run just the HA manager. The
 server Pods therefore have a TCP **readiness** probe on 10051 and no liveness probe on that
@@ -372,13 +398,21 @@ by hand are never touched. Encryption settings are left to Zabbix.
 
 ## Jobs
 
-Jobs run the operator image with a subcommand, so the project ships a single image. Each
-Job has an owner reference, a deterministic name and a TTL.
+Jobs run the operator image as `manager job <command>`, so the project ships a single
+image. Each Job has a controller owner reference, a deterministic name (the same inputs
+always give the same Job), a deadline and a TTL; it runs non-root with a read-only root
+filesystem and no API token. Credentials are mounted as files from the ZabbixDatabase's
+Secret, never passed as environment variables, and TLS settings come from
+`ZabbixDatabase.spec.tls`. A Job reports a JSON result in its termination message, which
+the operator reads from the pod status.
+
+Times are taken from the database server's clock, so clock skew between nodes cannot
+make a live HA node look stale.
 
 | Job | When | What it does |
 |---|---|---|
-| `precheck` | Before any upgrade | Connects through `directHost`, reads `dbversion`, checks the target line is a valid upgrade from the database's schema, confirms no `ha_node` row is active once servers are stopped |
-| `ha-reset` | Before the standalone step of a major upgrade or a fresh install | Deletes all `ha_node` rows (no server Pods exist at this point) |
+| `precheck` | Before installing and before any upgrade | Connects through `directHost`; reports the PostgreSQL version, the schema level and the number of active HA nodes; fails with a reason when the target line is unsupported (`UnsupportedVersion`), the connection is not to the primary (`NotPrimary`), PostgreSQL is too old for the target line (`PostgreSQLTooOld`) or the schema is newer than the target (`Downgrade`) |
+| `ha-reset` | Before the standalone step of a major upgrade | Deletes all `ha_node` rows; refuses while any node has heartbeated within the last 30 seconds, which means a server is still running somewhere |
 | `ha-gc` | Every 5 minutes while `Running` | Deletes `ha_node` rows whose name is not a live server Pod and whose last access is older than a safety window; reports how many rows were removed |
 
 ## Lifecycle

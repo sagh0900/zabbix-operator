@@ -15,6 +15,7 @@ CONTROLLER_GEN_VERSION ?= v0.22.0
 SETUP_ENVTEST_VERSION  ?= release-0.25
 KUSTOMIZE_VERSION      ?= v5.8.2
 PROMETHEUS_VERSION     ?= 3.15.0
+PG_VERSIONS            ?= 14 15 17
 
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_GEN_VERSION)
 SETUP_ENVTEST  ?= $(LOCALBIN)/setup-envtest-$(SETUP_ENVTEST_VERSION)
@@ -26,7 +27,7 @@ PROMTOOL       ?= $(LOCALBIN)/promtool-$(PROMETHEUS_VERSION)
 help: ## Show targets.
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/{printf "  %-16s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 
-.PHONY: manifests generate fmt vet lint test test-monitoring build build-installer
+.PHONY: manifests generate fmt vet lint test test-db test-monitoring build build-installer
 manifests: $(CONTROLLER_GEN) ## Generate CRDs and RBAC from markers.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
 generate: $(CONTROLLER_GEN) ## Generate deepcopy code.
@@ -41,6 +42,18 @@ test: manifests generate fmt vet $(SETUP_ENVTEST) ## Unit and envtest suites.
 	@assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" && test -n "$$assets" || \
 		{ echo "envtest assets unavailable"; exit 1; }; \
 		KUBEBUILDER_ASSETS="$$assets" go test ./... -coverprofile cover.out
+test-db: ## Run the database tests against each PostgreSQL major version in PG_VERSIONS (needs Docker).
+	@set -e; for v in $(PG_VERSIONS); do \
+		name=zo-test-pg$$v-$$$$; \
+		$(CONTAINER_TOOL) run -d --rm --name $$name -e POSTGRES_PASSWORD=test -p 127.0.0.1::5432 postgres:$$v >/dev/null; \
+		trap "$(CONTAINER_TOOL) rm -f $$name >/dev/null 2>&1" EXIT; \
+		until $(CONTAINER_TOOL) exec $$name pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do sleep 1; done; \
+		port=$$($(CONTAINER_TOOL) port $$name 5432/tcp | head -1 | sed 's/.*://'); \
+		echo "== PostgreSQL $$v"; \
+		ZO_REQUIRE_DB=1 ZO_TEST_PG="host=127.0.0.1 port=$$port user=postgres password=test dbname=postgres sslmode=disable" \
+			go test ./internal/jobs/ -run DB -count=1; \
+		$(CONTAINER_TOOL) rm -f $$name >/dev/null 2>&1; \
+	done
 test-monitoring: $(PROMTOOL) ## Check and unit-test the Prometheus rules.
 	@tmp=$$(mktemp -d) && trap 'rm -rf '$$tmp EXIT && \
 		go run ./hack/extract-rules config/monitoring/prometheusrule.yaml > $$tmp/rules.yaml && \
