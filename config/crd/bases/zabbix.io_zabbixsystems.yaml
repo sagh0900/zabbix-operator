@@ -1693,7 +1693,7 @@ spec:
                     description: |-
                       ApproveMajor approves one major upgrade when it equals the target line (for
                       example "8.0"). A major upgrade is irreversible without a database restore.
-                    pattern: ^(8\.0)?$
+                    pattern: ^([1-9][0-9]?\.(0|[1-9][0-9]?))?$
                     type: string
                   requireBackupWithin:
                     default: 24h
@@ -1704,10 +1704,11 @@ spec:
                 type: object
               version:
                 description: |-
-                  Version of Zabbix for server, frontend, web service and proxies. Supported lines
-                  are 7.0 and 8.0, for example 7.0.25 or 8.0.0rc1.
+                  Version of Zabbix for server, frontend, web service and proxies, for example 7.0.25
+                  or 8.0.0rc1. A release line this operator version does not support is reported as
+                  Blocked and never deployed.
                 maxLength: 24
-                pattern: ^(7\.0|8\.0)\.(0|[1-9][0-9]*)((alpha|beta|rc)[1-9][0-9]*)?$
+                pattern: ^[1-9][0-9]?\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]*)((alpha|beta|rc)[1-9][0-9]*)?$
                 type: string
               web:
                 description: Web is the Zabbix frontend.
