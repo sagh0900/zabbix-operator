@@ -22,7 +22,7 @@ jobs:
           echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
           echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: make test
