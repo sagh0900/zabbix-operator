@@ -1,0 +1,45 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - zabbix.io
+  resources:
+  - zabbixdatabases
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - zabbix.io
+  resources:
+  - zabbixdatabases/status
+  verbs:
+  - get
+  - patch
+  - update
