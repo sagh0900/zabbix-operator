@@ -24,6 +24,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	pg1 = "pg-1"
+	pg2 = "pg-2"
+)
+
 func tp(t time.Time) *metav1.Time {
 	mt := metav1.NewTime(t)
 	return &mt
@@ -110,7 +115,7 @@ func TestEvaluate_RecoveryInvariant(t *testing.T) {
 		now := time.Unix(0, 0).UTC()
 		var lastChange *metav1.Time
 		count := 0
-		prev := "pg-1"
+		prev := pg1
 
 		// Random burst of switchovers within a short span.
 		steps := rng.Intn(8) + 1
@@ -118,10 +123,10 @@ func TestEvaluate_RecoveryInvariant(t *testing.T) {
 			now = now.Add(time.Duration(rng.Intn(20)) * time.Second)
 			curr := prev
 			if rng.Intn(2) == 0 {
-				if prev == "pg-1" {
-					curr = "pg-2"
+				if prev == pg1 {
+					curr = pg2
 				} else {
-					curr = "pg-1"
+					curr = pg1
 				}
 			}
 			r := Evaluate(prev, curr, count, lastChange, now, window, threshold)
