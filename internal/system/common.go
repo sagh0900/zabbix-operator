@@ -122,7 +122,7 @@ var operatorManagedKeys = []string{
 	"ZBX_HANODENAME", "ZBX_AUTOHANODENAME", "ZBX_NODEADDRESS",
 	"ZBX_DBTLSCONNECT", "ZBX_DBTLSCAFILE", "ZBX_DBTLSCERTFILE", "ZBX_DBTLSKEYFILE",
 	"ZBX_DB_ENCRYPTION", "ZBX_DB_CA_FILE", "ZBX_DB_CERT_FILE", "ZBX_DB_KEY_FILE", "ZBX_DB_VERIFY_HOST",
-	"ZBX_SERVER_HOST",
+	"ZBX_SERVER_HOST", "ZBX_SERVER_PORT",
 }
 
 // databaseEnv returns the connection variables common to server and frontend.

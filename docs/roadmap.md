@@ -58,9 +58,10 @@ Release **v0.1.0** after PR 12.
   (CNPG 1.26 or newer for in-place PostgreSQL major upgrades):
   1. Install Zabbix 7.0.1 on PostgreSQL 14.
   2. Request 8.0: blocked with `PostgreSQLTooOld`, nothing changes.
-  3. Upgrade PostgreSQL 14 → 15 through CNPG while Zabbix runs; Zabbix reconnects and is
-     never stopped by the operator. Then patch-upgrade Zabbix 7.0.1 → 7.0.25.
-  4. Upgrade PostgreSQL 15 → 17 through CNPG while Zabbix runs. Then major-upgrade Zabbix
+  3. Upgrade PostgreSQL 14 → 16 through CNPG while Zabbix runs (CNPG upgrades in place only
+     to 16 or newer); Zabbix reconnects and is never stopped by the operator. Then
+     patch-upgrade Zabbix 7.0.1 → 7.0.25.
+  4. Upgrade PostgreSQL 16 → 17 through CNPG while Zabbix runs. Then major-upgrade Zabbix
      7.0.25 → 8.0 with `approveMajor`. Until 8.0 images are published under release tags,
      this runs on `zabbix/*:ubuntu-trunk` pinned by digest (currently 8.0.0rc1).
 

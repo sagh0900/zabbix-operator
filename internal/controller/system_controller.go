@@ -33,7 +33,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -97,6 +99,7 @@ type SystemReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups,verbs=get;list;watch
 
 // isActive reports whether a running server pod is the active HA node.
 func (r *SystemReconciler) isActive(ctx context.Context, p *corev1.Pod) bool {
@@ -132,6 +135,8 @@ type observation struct {
 	webEnabled bool
 	lastGC     *metav1.Time // LastHANodeGCTime to record
 	serverPods []string     // names of live server pods
+	step       zabbixv1alpha1.UpgradeStep
+	target     string // UpgradeTarget to record
 }
 
 // Reconcile moves one ZabbixSystem one step towards its spec.
@@ -200,7 +205,7 @@ func (r *SystemReconciler) reconcileSystem(ctx context.Context, sys *zabbixv1alp
 		// After the servers of an upgrade, the frontend and web service still roll; the
 		// upgrade is reported until every component has settled.
 		if sys.Status.Phase == zabbixv1alpha1.PhaseUpgrading && hold == "" &&
-			obs.phase == zabbixv1alpha1.PhaseDegraded && len(obs.conflicts) == 0 && obs.activeN > 0 {
+			obs.phase == zabbixv1alpha1.PhaseDegraded && len(obs.conflicts) == 0 {
 			obs.phase = zabbixv1alpha1.PhaseUpgrading
 			obs.reason = "Finishing the upgrade to " + running + ": " + obs.reason
 		}
@@ -261,32 +266,57 @@ func (r *SystemReconciler) install(ctx context.Context, sys *zabbixv1alpha1.Zabb
 }
 
 // upgrade moves a running system to a new version. Patch releases share the schema and
-// roll servers one at a time; schema upgrades are not performed yet.
+// roll servers one at a time; schema upgrades stop all servers and let one standalone
+// server upgrade the schema (see majorStep).
 func (r *SystemReconciler) upgrade(ctx context.Context, sys *zabbixv1alpha1.ZabbixSystem, db *zabbixv1alpha1.ZabbixDatabase,
 	target zabbix.Version, hold string, obs *observation) (time.Duration, error) {
+	if sys.Status.UpgradeStep != "" {
+		return r.majorStep(ctx, sys, db, hold, obs)
+	}
+	running, err := zabbix.ParseVersion(sys.Status.RunningVersion)
+	if err != nil {
+		return 0, err
+	}
+	keepRunning := func(blocked, reason string) (time.Duration, error) {
+		requeue, _, err := r.converge(ctx, sys, db, running.String(), running.String(), hold, obs)
+		obs.phase, obs.blocked, obs.reason = zabbixv1alpha1.PhaseBlocked, blocked, reason
+		return max(requeue, 30*time.Second), err
+	}
+	if target.Compare(running) < 0 {
+		return keepRunning("Downgrade", fmt.Sprintf(
+			"Zabbix %s is running; %s is older and Zabbix cannot downgrade. Set spec.version to %s or newer",
+			running, target, running))
+	}
 	if hold != "" {
-		requeue, _, err := r.converge(ctx, sys, db, sys.Status.RunningVersion, sys.Status.RunningVersion, hold, obs)
+		requeue, _, err := r.converge(ctx, sys, db, running.String(), running.String(), hold, obs)
 		return requeue, err
 	}
 	res, err := r.precheck(ctx, sys, db, target)
 	if err != nil {
 		return 0, err
 	}
-	if res == nil || !res.OK || zabbix.Change(res.Change) != zabbix.SameSchema {
-		// Keep running the current version while the upgrade is checked or blocked.
-		requeue, _, err := r.converge(ctx, sys, db, sys.Status.RunningVersion, sys.Status.RunningVersion, "", obs)
-		switch {
-		case res == nil:
-			obs.phase, obs.reason = zabbixv1alpha1.PhaseUpgrading, "Checking the database for Zabbix "+sys.Spec.Version
-			return 5 * time.Second, err
-		case !res.OK:
-			obs.phase, obs.reason, obs.blocked = zabbixv1alpha1.PhaseBlocked, res.Message, res.Reason
-		default:
-			obs.phase, obs.blocked = zabbixv1alpha1.PhaseBlocked, "SchemaUpgradeRequired"
-			obs.reason = fmt.Sprintf("Upgrading from %s to %s changes the database schema, which this operator build does not perform",
-				sys.Status.RunningVersion, sys.Spec.Version)
+	switch {
+	case res == nil:
+		requeue, _, err := r.converge(ctx, sys, db, running.String(), running.String(), "", obs)
+		obs.phase, obs.reason = zabbixv1alpha1.PhaseUpgrading, "Checking the database for Zabbix "+sys.Spec.Version
+		return min(requeue, 5*time.Second), err
+	case !res.OK:
+		return keepRunning(res.Reason, res.Message)
+	case zabbix.Change(res.Change) == zabbix.SchemaUpgrade:
+		blocked, reason, err := r.majorGates(ctx, sys, db, running, target)
+		if err != nil {
+			return 0, err
 		}
-		return max(requeue, 30*time.Second), err
+		if blocked != "" {
+			return keepRunning(blocked, reason)
+		}
+		obs.step, obs.target = zabbixv1alpha1.StepStoppingServers, target.String()
+		obs.phase, obs.reason = zabbixv1alpha1.PhaseUpgrading, fmt.Sprintf("Upgrading from %s to %s: stopping the servers", running, target)
+		r.event(sys, corev1.EventTypeNormal, "SchemaUpgradeStarted", fmt.Sprintf(
+			"Upgrading the database schema from %s to %s; all servers stop until it has finished", running, target))
+		return time.Second, nil
+	case zabbix.Change(res.Change) != zabbix.SameSchema:
+		return keepRunning("UnexpectedSchema", "precheck reported "+res.Change+" for a running system")
 	}
 
 	// Patch upgrade: servers move first, standby before active; the frontend and web
@@ -649,6 +679,7 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 	}
 	st.Phase, st.PhaseReason, st.RunningVersion = obs.phase, obs.reason, obs.running
 	st.LastHANodeGCTime = obs.lastGC
+	st.UpgradeStep, st.UpgradeTarget = obs.step, obs.target
 	if obs.components != nil {
 		st.Components = obs.components
 	}
@@ -745,6 +776,14 @@ func (r *SystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&zabbixv1alpha1.ZabbixDatabase{}, handler.EnqueueRequestsFromMapFunc(r.systemsBy(indexSystemDatabase, ""))).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.systemsForSecret), builder.OnlyMetadata).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.systemsBy(indexSystemRefs, "ConfigMap/")), builder.OnlyMetadata).
+		// Upgrade gates depend on the CNPG cluster's health and its Backups.
+		Watches(newCNPGClusterObject(), handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+			return r.systemsForCluster(ctx, o.GetNamespace(), o.GetName())
+		})).
+		Watches(newCNPGBackupObject(), handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+			name, _, _ := unstructured.NestedString(o.(*unstructured.Unstructured).Object, "spec", "cluster", "name")
+			return r.systemsForCluster(ctx, o.GetNamespace(), name)
+		})).
 		Complete(r)
 }
 
@@ -778,6 +817,32 @@ func (r *SystemReconciler) systemsForSecret(ctx context.Context, o client.Object
 		reqs = append(reqs, r.systemsBy(indexSystemDatabase, "")(ctx, &db)...)
 	}
 	return reqs
+}
+
+// systemsForCluster maps a CNPG cluster to the systems whose database uses it.
+func (r *SystemReconciler) systemsForCluster(ctx context.Context, ns, cluster string) []reconcile.Request {
+	dbs := &zabbixv1alpha1.ZabbixDatabaseList{}
+	if err := r.List(ctx, dbs, client.InNamespace(ns), client.MatchingFields{indexClusterRef: cluster}); err != nil {
+		log.FromContext(ctx).Error(err, "listing ZabbixDatabases")
+		return nil
+	}
+	var reqs []reconcile.Request
+	for _, db := range dbs.Items {
+		reqs = append(reqs, r.systemsBy(indexSystemDatabase, "")(ctx, &db)...)
+	}
+	return reqs
+}
+
+func newCNPGClusterObject() *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(CNPGClusterGVK)
+	return u
+}
+
+func newCNPGBackupObject() *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: "v1", Kind: "Backup"})
+	return u
 }
 
 // systemsBy maps an object to the systems in its namespace indexed under prefix+name.

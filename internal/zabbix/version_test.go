@@ -100,3 +100,17 @@ func TestPostgresRequirements(t *testing.T) {
 		t.Errorf("minimums: 7.0 %d, 8.0 %d", v("7.0.25").MinPostgres(), v("8.0.0rc1").MinPostgres())
 	}
 }
+
+func TestCompare(t *testing.T) {
+	ordered := []string{"7.0.1", "7.0.25", "7.0.30", "8.0.0alpha2", "8.0.0beta1", "8.0.0rc1", "8.0.0rc2", "8.0.0", "8.0.1"}
+	for i := range ordered {
+		for j := range ordered {
+			a, _ := ParseVersion(ordered[i])
+			b, _ := ParseVersion(ordered[j])
+			want := sign(i - j)
+			if got := a.Compare(b); got != want {
+				t.Errorf("Compare(%s, %s) = %d, want %d", ordered[i], ordered[j], got, want)
+			}
+		}
+	}
+}

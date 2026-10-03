@@ -218,6 +218,18 @@ func TestDBHAResetRefusesWhileNodesHeartbeat(t *testing.T) {
 	}
 }
 
+// Servers stopped for an upgrade leave fresh rows marked stopped (1); they do not block.
+func TestDBHAResetIgnoresCleanlyStoppedNodes(t *testing.T) {
+	d := newTestDB(t)
+	d.schema(7000000)
+	d.node("zabbix-server-0", 1, 2)
+	d.node("zabbix-server-1", 2, 2)
+	r := HAReset(context.Background(), d.conn, 30)
+	if !r.OK || r.Deleted != 2 {
+		t.Fatalf("result %+v", r)
+	}
+}
+
 func TestDBHAResetClearsStaleTable(t *testing.T) {
 	d := newTestDB(t)
 	d.schema(7000000)
@@ -302,8 +314,17 @@ func TestDBMainEndToEnd(t *testing.T) {
 	if err != nil || !r.OK || r.Change != string(zabbix.SameSchema) {
 		t.Fatalf("result %+v, %v", r, err)
 	}
+	// A refusal is a finding, not a failure: the Job completes and reports it.
 	d.node("zabbix-server-0", haNodeActive, 1)
-	if code := Main([]string{CommandHAReset, "--result-file=" + resultFile}); code != 1 {
-		t.Fatalf("ha-reset with a live node: exit code %d, want 1", code)
+	if code := Main([]string{CommandHAReset, "--result-file=" + resultFile}); code != 0 {
+		t.Fatalf("ha-reset with a live node: exit code %d, want 0", code)
+	}
+	if b, _ := os.ReadFile(resultFile); !strings.Contains(string(b), `"reason":"LiveNodes"`) {
+		t.Fatalf("result %s", b)
+	}
+	// An unreachable database is worth retrying.
+	t.Setenv(EnvPort, "1")
+	if code := Main([]string{CommandPrecheck, "--target-version=7.0.25", "--result-file=" + resultFile}); code != 1 {
+		t.Fatalf("unreachable database: exit code %d, want 1", code)
 	}
 }

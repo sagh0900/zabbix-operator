@@ -305,3 +305,18 @@ func TestIsReady(t *testing.T) {
 		t.Error("IsReady")
 	}
 }
+
+// The frontend reaches the active server through the role-selected server Service.
+func TestWebUsesServerService(t *testing.T) {
+	in := fixture()
+	in.System.Name = "monitoring"
+	in.System.Spec.Web.Env = []corev1.EnvVar{{Name: "ZBX_SERVER_HOST", Value: "elsewhere"}}
+	e := env(WebPod(in, "monitoring-web-0"))
+	if e["ZBX_SERVER_HOST"].Value != "monitoring-server" || e["ZBX_SERVER_PORT"].Value != "10051" {
+		t.Errorf("server host %q port %q", e["ZBX_SERVER_HOST"].Value, e["ZBX_SERVER_PORT"].Value)
+	}
+	in.System.Spec.Server.Service.Port = 10061
+	if p := env(WebPod(in, "monitoring-web-0"))["ZBX_SERVER_PORT"].Value; p != "10061" {
+		t.Errorf("server port %q", p)
+	}
+}
