@@ -10,8 +10,9 @@ Instructions for anyone, human or automated, changing this code.
 ## Rules
 - Two CRDs only: `ZabbixDatabase` and `ZabbixSystem`. Do not add CRDs.
 - The operator never writes to CNPG objects and never creates database roles.
-- Server, web, web service and proxies are bare Pods owned by the system; agents are a
-  DaemonSet. Do not introduce Deployments or StatefulSets.
+- Server, web, web service and proxies are Pods created directly with a controller owner
+  reference to the ZabbixSystem, managed through `internal/podset`; agents are a
+  DaemonSet. Do not introduce Deployments or StatefulSets, and do not add child CRDs.
 - Supported Zabbix lines are 7.0 and 8.0. Major upgrades require explicit approval.
 - No external leader election for Zabbix server: native HA plus the readiness probe on
   10051 decides routing.

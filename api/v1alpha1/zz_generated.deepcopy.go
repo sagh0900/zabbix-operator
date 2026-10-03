@@ -366,6 +366,11 @@ func (in *ProxyRegistrationSpec) DeepCopy() *ProxyRegistrationSpec {
 func (in *ProxySpec) DeepCopyInto(out *ProxySpec) {
 	*out = *in
 	in.PodSettings.DeepCopyInto(&out.PodSettings)
+	if in.Enabled != nil {
+		in, out := &in.Enabled, &out.Enabled
+		*out = new(bool)
+		**out = **in
+	}
 	in.Service.DeepCopyInto(&out.Service)
 }
 
@@ -474,9 +479,9 @@ func (in *UpgradeSettings) DeepCopy() *UpgradeSettings {
 func (in *WebServiceSpec) DeepCopyInto(out *WebServiceSpec) {
 	*out = *in
 	in.PodSettings.DeepCopyInto(&out.PodSettings)
-	if in.Replicas != nil {
-		in, out := &in.Replicas, &out.Replicas
-		*out = new(int32)
+	if in.Enabled != nil {
+		in, out := &in.Enabled, &out.Enabled
+		*out = new(bool)
 		**out = **in
 	}
 	in.Service.DeepCopyInto(&out.Service)
@@ -497,9 +502,9 @@ func (in *WebServiceSpec) DeepCopy() *WebServiceSpec {
 func (in *WebSpec) DeepCopyInto(out *WebSpec) {
 	*out = *in
 	in.PodSettings.DeepCopyInto(&out.PodSettings)
-	if in.Replicas != nil {
-		in, out := &in.Replicas, &out.Replicas
-		*out = new(int32)
+	if in.Enabled != nil {
+		in, out := &in.Enabled, &out.Enabled
+		*out = new(bool)
 		**out = **in
 	}
 	in.Service.DeepCopyInto(&out.Service)

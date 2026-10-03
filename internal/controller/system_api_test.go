@@ -84,8 +84,11 @@ func TestSystemAPI_Defaults(t *testing.T) {
 	if s.ImageRepository != "zabbix" || s.ImageFlavor != "ubuntu" {
 		t.Errorf("image defaults: %q %q", s.ImageRepository, s.ImageFlavor)
 	}
-	if s.Server.Replicas != 2 || ptr.Deref(s.Web.Replicas, -1) != 1 || ptr.Deref(s.WebService.Replicas, -1) != 1 {
-		t.Errorf("replica defaults: server %d web %v webservice %v", s.Server.Replicas, s.Web.Replicas, s.WebService.Replicas)
+	if s.Server.Replicas != 2 || s.Web.Replicas != 1 || s.WebService.Replicas != 1 {
+		t.Errorf("replica defaults: server %d web %d webservice %d", s.Server.Replicas, s.Web.Replicas, s.WebService.Replicas)
+	}
+	if !ptr.Deref(s.Web.Enabled, false) || !ptr.Deref(s.WebService.Enabled, false) {
+		t.Errorf("enabled defaults: web %v webservice %v", s.Web.Enabled, s.WebService.Enabled)
 	}
 	if s.Upgrade.RequireBackupWithin == nil || s.Upgrade.RequireBackupWithin.Hours() != 24 {
 		t.Errorf("requireBackupWithin default: %v", s.Upgrade.RequireBackupWithin)
@@ -161,7 +164,11 @@ func TestSystemAPI_FieldRules(t *testing.T) {
 		reject string // empty: must be accepted
 	}{
 		{"server needs one replica", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Server.Replicas = -1 }, "spec.server.replicas"},
-		{"web may be disabled", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Web.Replicas = ptr.To[int32](0) }, ""},
+		{"web may be disabled", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Web.Enabled = ptr.To(false) }, ""},
+		{"web needs one replica", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Web.Replicas = -1 }, "spec.web.replicas"},
+		{"proxy may be disabled", func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+			s.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "dc1", Enabled: ptr.To(false)}}
+		}, ""},
 		{"agent needs an image", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Agent.Enabled = true }, "spec.agent.image is required"},
 		{"agent with image", func(s *zabbixv1alpha1.ZabbixSystemSpec) {
 			s.Agent.Enabled, s.Agent.Image = true, "zabbix/zabbix-agent2:ubuntu-7.0.25"

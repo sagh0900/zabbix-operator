@@ -63,7 +63,24 @@ Status reports the CNPG phase, the current primary and these conditions:
 The controller reads CNPG status and the credentials Secret only. Secrets are read directly
 from the API server and never cached. It never opens a database connection itself and never
 writes to CNPG objects. A Warning event is emitted when `Ready` becomes False and a Normal
-event when it becomes True. Every SQL statement the operator needs runs inside a short-lived Job
+event when it becomes True.
+
+#### TLS to PostgreSQL
+
+CNPG serves TLS by default and keeps its CA in the Secret `<cluster>-ca` (key `ca.crt`).
+`spec.tls` points Zabbix at it:
+
+```yaml
+tls:
+  mode: verify-full                                  # require | verify-ca | verify-full
+  caSecretRef: { name: zabbix-pg-ca, key: ca.crt }
+  clientCertSecretRef: { name: zabbix-client-cert }  # optional, kubernetes.io/tls, for certificate login
+```
+
+The operator mounts the CA (and client certificate) into the server Pods, the web Pods and
+its own Jobs, and sets each image's TLS settings. The web service never connects to the
+database and gets none. When CNPG renews the CA the Secret's hash changes and the Pods roll,
+standby first. Every SQL statement the operator needs runs inside a short-lived Job
 (see [Jobs](#jobs)).
 
 ### ZabbixSystem
@@ -99,7 +116,8 @@ spec:
     # common pod settings, see below
 
   web:
-    replicas: 2                # 0 disables the frontend
+    enabled: true              # default; false removes the frontend
+    replicas: 2
     service: { type: ClusterIP, port: 80 }
     ingress:
       enabled: true
@@ -133,7 +151,8 @@ pod-level settings:
 | Field | Purpose |
 |---|---|
 | `image` | Override the image derived from `version` and `imageFlavor` |
-| `replicas` | Instance count: server 1–9 (default 2), web and web service 0–20 (default 1, 0 disables), proxies 1–20 (default 1); not for `agent`, which runs one pod per eligible node |
+| `enabled` | Runs the component: `web`, `webService` and each proxy (default true), `agent` (default false). The server always runs. |
+| `replicas` | Instance count: server 1–9 (default 2), web and web service 1–20 (default 1), proxies 1–20 (default 1); not for `agent`, which runs one pod per eligible node |
 | `resources` | Container resources |
 | `env`, `envFrom` | Extra environment; operator-managed keys cannot be overridden |
 | `volumes`, `volumeMounts` | Extra mounts, e.g. a patched `zabbix.conf.php` or SAML certificates from a ConfigMap |
@@ -153,17 +172,29 @@ Validation rejects, at apply time: versions outside the 7.0 and 8.0 lines, lower
 `version`, changing `databaseRef`, an enabled agent without an image, and enabled proxy
 registration without its references.
 
-Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Blocked`),
+Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Blocked`) with a
+one-line `phaseReason`,
 `runningVersion`, `activeServer` (pod name and IP of the active HA node), per-component
 ready counts, and conditions `DatabaseReady`, `ServerActive`, `WebReady`, `Upgrading`,
 `UpgradeBlocked`, `Conflict`.
 
+`kubectl get zsys` shows the phase and its reason:
+
+```
+NAME     VERSION    RUNNING   PHASE       ACTIVE            REASON
+zabbix   7.0.25     7.0.25    Running     zabbix-server-1   zabbix-server-1 active, 1 standby
+zabbix   7.0.25     7.0.25    Degraded    zabbix-server-1   Waiting for database: primary is moving from zabbix-pg-1 to zabbix-pg-2
+zabbix   8.0.0rc1   7.0.25    Upgrading                     Schema upgrade running on zabbix-server-0 (standalone)
+zabbix   8.0.0rc1   7.0.25    Blocked     zabbix-server-1   PostgreSQL 14 is too old for Zabbix 8.0 (needs 15 or newer)
+```
+
 ## Workloads
 
-The system controller creates bare Pods for server, web, web service and proxies. It is the
-only writer of those Pods and performs the work a Deployment or StatefulSet would do:
-keeping the instance count, recreating lost Pods, and rolling Pods when their template
-changes. Agents run as a DaemonSet, because "one pod on every eligible node" is exactly what a
+The system controller creates Pods for server, web, web service and proxies directly, the
+way CloudNativePG manages its instances, without Deployments or StatefulSets. It is the only
+writer of those Pods: it keeps the instance count, recreates lost Pods and rolls Pods when
+their template changes. The generic part of this lives in `internal/podset`; one small
+builder per component renders its Pod, Service and Ingress. Agents run as a DaemonSet, because "one pod on every eligible node" is exactly what a
 DaemonSet does and reimplementing it adds risk without benefit.
 
 ### Pod identity and rollout
@@ -176,10 +207,21 @@ DaemonSet does and reimplementing it adds risk without benefit.
   Ready, where readiness is meaningful) before touching the next.
 - Server Pods are rolled standby-first: the active node is replaced last, so a configuration
   change costs one HA failover, not several.
-- All Pods have an owner reference to the system, so deleting the system removes them.
-- Because bare Pods are not owned by a controller, `kubectl drain` needs `--force` for nodes
-  running them. The operator recreates evicted Pods on another eligible node. Schedule them
-  with `affinity`/`topologySpreadConstraints` so replicas land on different nodes.
+- A Pod broken by its current template (crash-looping) is replaced first, even though it is
+  unhealthy, so a bad configuration can always be corrected.
+- Every Pod has a **controller** owner reference to the ZabbixSystem, as CNPG instance Pods
+  have to their Cluster. Because of it, `kubectl drain` evicts the Pods through the eviction
+  API and respects their PodDisruptionBudget (no `--force`), the cluster autoscaler can
+  remove nodes running them, Pod events reach the operator immediately, deleting the
+  ZabbixSystem removes them, and no other controller can claim them.
+- Each component has a PodDisruptionBudget allowing one voluntary disruption at a time, so a
+  node drain never takes a whole component down. Evicted or lost Pods are recreated on
+  another eligible node.
+- Server, web and web service Pods get a soft anti-affinity across nodes by default, so
+  replicas spread when the cluster allows it; `affinity` overrides it.
+- Server Pods carry `zabbix.io/role=active|standby`, kept current without restarting them.
+- While the database is not `Ready`, or an upgrade step owns the Pods, rolling is put on
+  hold: nothing is created, replaced or scaled down, and `phaseReason` says why.
 
 ### Server and HA routing
 
@@ -210,6 +252,24 @@ needed.
   `<system>-web` Service.
 - The server is pointed at the web service with
   `ZBX_WEBSERVICEURL=http://<system>-webservice:10053/report`.
+- Configuration files such as SAML settings are mounted from ConfigMaps or Secrets with
+  `volumes` and `volumeMounts`. The ZabbixSystem only holds the references; the contents
+  live in the ConfigMap:
+
+  ```yaml
+  web:
+    volumes:
+      - name: saml
+        configMap: { name: zabbix-web-saml }   # zabbix.conf.php, nginx.conf, Utils.php, idp.crt
+    volumeMounts:
+      - { name: saml, mountPath: /etc/zabbix/web/zabbix.conf.php, subPath: zabbix.conf.php }
+      - { name: saml, mountPath: /etc/zabbix/nginx.conf, subPath: nginx.conf }
+      - { name: saml, mountPath: /usr/share/zabbix/vendor/onelogin/php-saml/src/Saml2/Utils.php, subPath: Utils.php }
+      - { name: saml, mountPath: /usr/share/zabbix/conf/certs/idp.crt, subPath: idp.crt }
+  ```
+
+  Files mounted with `subPath` do not update in a running Pod. The operator records a hash
+  of every referenced ConfigMap and Secret on the Pods, so a change rolls them.
 
 ### Proxies
 
