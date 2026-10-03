@@ -33,6 +33,7 @@ import (
 
 	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
 	"github.com/sagh0900/zabbix-operator/internal/controller"
+	"github.com/sagh0900/zabbix-operator/internal/jobs"
 	"github.com/sagh0900/zabbix-operator/internal/version"
 )
 
@@ -49,6 +50,10 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "job" {
+		os.Exit(jobs.Main(os.Args[2:]))
+	}
+
 	var (
 		metricsAddr    string
 		metricsSecure  bool
