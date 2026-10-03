@@ -54,10 +54,20 @@ Release **v0.1.0** after PR 12.
   Service follows.
 - CNPG switchover, failover and a PostgreSQL major upgrade, in steady state and during a
   Zabbix upgrade.
-- Patch upgrade 7.0.x → 7.0.y under load; measured data gap.
+- Upgrade journey, run in order on one installation with continuous data collection
+  (CNPG 1.26 or newer for in-place PostgreSQL major upgrades):
+  1. Install Zabbix 7.0.1 on PostgreSQL 14.
+  2. Request 8.0: blocked with `PostgreSQLTooOld`, nothing changes.
+  3. Upgrade PostgreSQL 14 → 15 through CNPG while Zabbix runs; Zabbix reconnects and is
+     never stopped by the operator. Then patch-upgrade Zabbix 7.0.1 → 7.0.25.
+  4. Upgrade PostgreSQL 15 → 17 through CNPG while Zabbix runs. Then major-upgrade Zabbix
+     7.0.25 → 8.0 with `approveMajor`. Until 8.0 images are published under release tags,
+     this runs on `zabbix/*:ubuntu-trunk` pinned by digest (currently 8.0.0rc1).
+
+  After every step: history keeps arriving without gaps beyond the measured interruption,
+  an HA failover still works, no alert stays firing, and `ha_node` holds only live nodes.
 - Major upgrade 7.0 → 8.0 on a copy of production data: duration, every blocked reason,
-  and recovery by restoring the backup. Until 8.0 images are published under release tags,
-  this runs on `zabbix/*:ubuntu-trunk` pinned by digest (currently 8.0.0rc1).
+  and recovery by restoring the backup.
 - Node drain and node loss for every component.
 - Operator restart and operator upgrade during a rollout.
 - `ha_node` GC: stale rows removed, live rows never removed.
