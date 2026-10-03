@@ -181,7 +181,8 @@ func (m *Manager) ownedPods(ctx context.Context, set Set) (map[string]*corev1.Po
 }
 
 // removeUnwanted deletes failed pods and, unless the set is on hold, pods that are no
-// longer members.
+// longer members. A pod that is no longer a member and is still terminating is reported,
+// so callers can wait until it is really gone.
 func (m *Manager) removeUnwanted(ctx context.Context, set Set, owned map[string]*corev1.Pod) ([]string, error) {
 	wanted := map[string]bool{}
 	for _, mem := range set.Members {
@@ -191,6 +192,9 @@ func (m *Manager) removeUnwanted(ctx context.Context, set Set, owned map[string]
 	for name, p := range owned {
 		var why string
 		switch {
+		case p.DeletionTimestamp != nil && !wanted[name]:
+			actions = append(actions, fmt.Sprintf("waiting for %s to terminate", name))
+			continue
 		case p.DeletionTimestamp != nil:
 			continue
 		case !wanted[name] && set.Hold == "":
