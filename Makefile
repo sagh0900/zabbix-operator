@@ -14,17 +14,19 @@ GOLANGCI_LINT_VERSION  ?= v2.14.0
 CONTROLLER_GEN_VERSION ?= v0.22.0
 SETUP_ENVTEST_VERSION  ?= release-0.25
 KUSTOMIZE_VERSION      ?= v5.8.2
+PROMETHEUS_VERSION     ?= 3.15.0
 
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_GEN_VERSION)
 SETUP_ENVTEST  ?= $(LOCALBIN)/setup-envtest-$(SETUP_ENVTEST_VERSION)
 KUSTOMIZE      ?= $(LOCALBIN)/kustomize-$(KUSTOMIZE_VERSION)
 GOLANGCI_LINT  ?= $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
+PROMTOOL       ?= $(LOCALBIN)/promtool-$(PROMETHEUS_VERSION)
 
 .PHONY: help
 help: ## Show targets.
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/{printf "  %-16s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 
-.PHONY: manifests generate fmt vet lint test build build-installer
+.PHONY: manifests generate fmt vet lint test test-monitoring build build-installer
 manifests: $(CONTROLLER_GEN) ## Generate CRDs and RBAC from markers.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
 generate: $(CONTROLLER_GEN) ## Generate deepcopy code.
@@ -39,14 +41,22 @@ test: manifests generate fmt vet $(SETUP_ENVTEST) ## Unit and envtest suites.
 	@assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" && test -n "$$assets" || \
 		{ echo "envtest assets unavailable"; exit 1; }; \
 		KUBEBUILDER_ASSETS="$$assets" go test ./... -coverprofile cover.out
+test-monitoring: $(PROMTOOL) ## Check and unit-test the Prometheus rules.
+	@tmp=$$(mktemp -d) && trap 'rm -rf '$$tmp EXIT && \
+		go run ./hack/extract-rules config/monitoring/prometheusrule.yaml > $$tmp/rules.yaml && \
+		cp test/monitoring/rules_test.yaml $$tmp/ && \
+		$(PROMTOOL) check rules $$tmp/rules.yaml && \
+		$(PROMTOOL) test rules $$tmp/rules_test.yaml
 build: ## Build the manager binary.
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(LOCALBIN)/manager ./cmd/manager
 
-build-installer: manifests $(KUSTOMIZE) ## Render dist/install.yaml for IMG.
+build-installer: manifests $(KUSTOMIZE) ## Render dist/install.yaml, dist/monitoring.yaml and dist/dashboard.json for IMG.
 	mkdir -p dist
 	cd config/manager && $(KUSTOMIZE) edit set image manager=$(IMG)
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 	cd config/manager && $(KUSTOMIZE) edit set image manager=manager:latest
+	$(KUSTOMIZE) build config/monitoring > dist/monitoring.yaml
+	cp config/monitoring/dashboard.json dist/dashboard.json
 
 .PHONY: docker-build docker-push
 docker-build: ## Build the image.
@@ -69,5 +79,10 @@ $(SETUP_ENVTEST): | $(LOCALBIN)
 	$(call go-install-tool,$@,sigs.k8s.io/controller-runtime/tools/setup-envtest,$(SETUP_ENVTEST_VERSION),setup-envtest)
 $(KUSTOMIZE): | $(LOCALBIN)
 	$(call go-install-tool,$@,sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION),kustomize)
+$(PROMTOOL): | $(LOCALBIN)
+	@set -e; tmp=$$(mktemp -d); \
+		curl -sSfL https://github.com/prometheus/prometheus/releases/download/v$(PROMETHEUS_VERSION)/prometheus-$(PROMETHEUS_VERSION).linux-amd64.tar.gz \
+		| tar -xz -C $$tmp --strip-components=1 prometheus-$(PROMETHEUS_VERSION).linux-amd64/promtool; \
+		mv $$tmp/promtool $@; rm -rf $$tmp
 $(GOLANGCI_LINT): | $(LOCALBIN)
 	$(call go-install-tool,$@,github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION),golangci-lint)

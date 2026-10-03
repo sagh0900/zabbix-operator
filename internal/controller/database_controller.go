@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
+	"github.com/sagh0900/zabbix-operator/internal/metrics"
 )
 
 // CNPGClusterGVK identifies a CloudNativePG Cluster.
@@ -70,6 +71,9 @@ type DatabaseReconciler struct {
 func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	db := &zabbixv1alpha1.ZabbixDatabase{}
 	if err := r.Get(ctx, req.NamespacedName, db); err != nil {
+		if apierrors.IsNotFound(err) {
+			metrics.DeleteDatabase(req.Namespace, req.Name)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -98,14 +102,21 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	status, requeue := computeDatabaseStatus(db, parseCNPGCluster(cluster), inspectCredentials(db, secretData), r.now())
+	recordDatabaseMetrics(db, status)
 	if !equality.Semantic.DeepEqual(status, db.Status) {
-		r.recordReadyTransition(db, status)
+		prev := db.Status.DeepCopy()
 		db.Status = status
 		if err := r.Status().Update(ctx, db); err != nil {
 			if apierrors.IsConflict(err) {
 				return ctrl.Result{RequeueAfter: time.Second}, nil
 			}
 			return ctrl.Result{}, err
+		}
+		// Events and counters follow the persisted status, so a retried reconcile never
+		// reports the same change twice.
+		r.recordReadyTransition(db, prev)
+		if prev.CurrentPrimary != "" && status.CurrentPrimary != prev.CurrentPrimary {
+			metrics.DatabasePrimaryChanges.WithLabelValues(db.Namespace, db.Name).Inc()
 		}
 	}
 	return ctrl.Result{RequeueAfter: requeue}, nil
@@ -118,10 +129,29 @@ func (r *DatabaseReconciler) now() time.Time {
 	return time.Now()
 }
 
-// recordReadyTransition emits an event when Ready changes.
-func (r *DatabaseReconciler) recordReadyTransition(db *zabbixv1alpha1.ZabbixDatabase, next zabbixv1alpha1.ZabbixDatabaseStatus) {
-	prev := meta.FindStatusCondition(db.Status.Conditions, zabbixv1alpha1.DatabaseReady)
-	cur := meta.FindStatusCondition(next.Conditions, zabbixv1alpha1.DatabaseReady)
+// recordDatabaseMetrics exports the computed status.
+func recordDatabaseMetrics(db *zabbixv1alpha1.ZabbixDatabase, next zabbixv1alpha1.ZabbixDatabaseStatus) {
+	ns, name := db.Namespace, db.Name
+	for _, c := range next.Conditions {
+		if c.Type == zabbixv1alpha1.DatabaseReady {
+			ready := 0.0
+			if c.Status == metav1.ConditionTrue {
+				ready = 1
+			}
+			metrics.DatabaseReady.WithLabelValues(ns, name).Set(ready)
+			continue
+		}
+		metrics.SetDatabaseCondition(ns, name, c.Type, string(c.Status))
+	}
+	// Create the series so it reads 0 before the first change.
+	metrics.DatabasePrimaryChanges.WithLabelValues(ns, name)
+}
+
+// recordReadyTransition emits an event when Ready differs between prevStatus and the
+// status now stored on db.
+func (r *DatabaseReconciler) recordReadyTransition(db *zabbixv1alpha1.ZabbixDatabase, prevStatus *zabbixv1alpha1.ZabbixDatabaseStatus) {
+	prev := meta.FindStatusCondition(prevStatus.Conditions, zabbixv1alpha1.DatabaseReady)
+	cur := meta.FindStatusCondition(db.Status.Conditions, zabbixv1alpha1.DatabaseReady)
 	if cur == nil || (prev != nil && prev.Status == cur.Status) {
 		return
 	}

@@ -123,10 +123,13 @@ func newNamespace(t *testing.T) string {
 	return ns.Name
 }
 
-// eventually polls check until it returns nil or the timeout expires.
-func eventually(t *testing.T, timeout time.Duration, check func() error) {
+// waitFor bounds how long envtest assertions wait for the controller.
+const waitFor = 10 * time.Second
+
+// eventually polls check until it returns nil or waitFor expires.
+func eventually(t *testing.T, check func() error) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(waitFor)
 	var err error
 	for time.Now().Before(deadline) {
 		if err = check(); err == nil {
@@ -134,5 +137,5 @@ func eventually(t *testing.T, timeout time.Duration, check func() error) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("condition not met within %s: %v", timeout, err)
+	t.Fatalf("condition not met within %s: %v", waitFor, err)
 }

@@ -1,0 +1,103 @@
+# promtool unit tests for config/monitoring/prometheusrule.yaml.
+# Run with: make test-monitoring
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+
+tests:
+  - name: operator down when the target is missing or down
+    interval: 1m
+    input_series:
+      - series: 'up{job="zabbix-operator-metrics"}'
+        values: '1x5 0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ZabbixOperatorDown
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ZabbixOperatorDown
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: Zabbix operator is down
+              description: No zabbix-operator metrics target has been up for 5 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatordown
+
+  - name: reconcile errors fire only when they persist
+    interval: 1m
+    input_series:
+      - series: 'controller_runtime_reconcile_errors_total{job="zabbix-operator-metrics",controller="zabbixdatabase"}'
+        values: '0+1x30'
+      - series: 'controller_runtime_reconcile_errors_total{job="zabbix-operator-metrics",controller="other"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ZabbixOperatorReconcileErrors
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: ZabbixOperatorReconcileErrors
+        exp_alerts:
+          - exp_labels: { severity: warning, controller: zabbixdatabase }
+            exp_annotations:
+              summary: Zabbix operator reconcile errors
+              description: Controller zabbixdatabase has failed reconciles for 15 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatorreconcileerrors
+
+  - name: database not ready escalates from warning to critical
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_database_ready{namespace="zabbix",database="zabbix-db"}'
+        values: '1x2 0x20'
+      - series: 'zabbix_operator_database_ready{namespace="zabbix",database="healthy"}'
+        values: '1x22'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: ZabbixDatabaseNotReady
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: ZabbixDatabaseNotReady
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, database: zabbix-db }
+            exp_annotations:
+              summary: Zabbix database not ready
+              description: ZabbixDatabase zabbix/zabbix-db has not been Ready for 5 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabasenotready
+      - eval_time: 17m
+        alertname: ZabbixDatabaseNotReady
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, database: zabbix-db }
+            exp_annotations:
+              summary: Zabbix database not ready
+              description: ZabbixDatabase zabbix/zabbix-db has not been Ready for 5 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabasenotready
+      - eval_time: 19m
+        alertname: ZabbixDatabaseNotReady
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, database: zabbix-db }
+            exp_annotations:
+              summary: Zabbix database not ready
+              description: ZabbixDatabase zabbix/zabbix-db has not been Ready for 5 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabasenotready
+          - exp_labels: { severity: critical, namespace: zabbix, database: zabbix-db }
+            exp_annotations:
+              summary: Zabbix database not ready
+              description: ZabbixDatabase zabbix/zabbix-db has not been Ready for 15 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabasenotready
+
+  - name: primary flapping
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_database_condition{namespace="zabbix",database="zabbix-db",condition="PrimaryStable",status="False"}'
+        values: '0x2 1x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ZabbixDatabasePrimaryFlapping
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: ZabbixDatabasePrimaryFlapping
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, database: zabbix-db, condition: PrimaryStable, status: "False" }
+            exp_annotations:
+              summary: Zabbix database primary is flapping
+              description: The primary of zabbix/zabbix-db keeps changing.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixdatabaseprimaryflapping

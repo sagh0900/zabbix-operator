@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics
+  namespace: system
+  labels:
+    app.kubernetes.io/name: zabbix-operator
+spec:
+  selector:
+    app.kubernetes.io/name: zabbix-operator
+  ports:
+    - name: https
+      port: 8443
+      targetPort: metrics

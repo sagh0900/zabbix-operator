@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: metrics
+  namespace: system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zabbix-operator
+  endpoints:
+    - port: https
+      scheme: https
+      path: /metrics
+      interval: 30s
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        # The operator serves a self-signed certificate.
+        insecureSkipVerify: true
