@@ -107,6 +107,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	operatorImage := os.Getenv("OPERATOR_IMAGE")
+	if operatorImage == "" {
+		log.Error(nil, "OPERATOR_IMAGE must name the operator image; database Jobs run it")
+		os.Exit(1)
+	}
+	if err := (&controller.SystemReconciler{
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Recorder:      mgr.GetEventRecorder("zabbix-operator"),
+		OperatorImage: operatorImage,
+	}).SetupWithManager(mgr); err != nil {
+		log.Error(err, "unable to set up controller", "controller", "ZabbixSystem")
+		os.Exit(1)
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		log.Error(err, "unable to set up health check")
 		os.Exit(1)

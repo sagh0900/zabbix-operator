@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,6 +42,13 @@ import (
 
 // k8s is the client for envtest-based tests; nil when envtest assets are unavailable.
 var k8s client.Client
+
+// testOperatorImage is the image database Jobs run in tests.
+const testOperatorImage = "zabbix-operator:test"
+
+// fakeActive plays Zabbix HA in tests: it holds which server pods ("namespace/name")
+// accept trapper connections.
+var fakeActive sync.Map
 
 func TestMain(m *testing.M) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
@@ -74,6 +82,20 @@ func TestMain(m *testing.M) {
 		Recorder:  mgr.GetEventRecorder("zabbix-operator"),
 	}).SetupWithManager(mgr); err != nil {
 		fmt.Fprintln(os.Stderr, "setting up controller:", err)
+		os.Exit(1)
+	}
+
+	if err := (&SystemReconciler{
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Recorder:      mgr.GetEventRecorder("zabbix-operator"),
+		OperatorImage: testOperatorImage,
+		ActiveProbe: func(_ context.Context, p *corev1.Pod) bool {
+			v, ok := fakeActive.Load(p.Namespace + "/" + p.Name)
+			return ok && v.(bool)
+		},
+	}).SetupWithManager(mgr); err != nil {
+		fmt.Fprintln(os.Stderr, "setting up system controller:", err)
 		os.Exit(1)
 	}
 

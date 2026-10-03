@@ -33,6 +33,9 @@ spec:
           image: manager:latest
           args:
             - --leader-elect
+          env:
+            - name: OPERATOR_IMAGE
+              value: set-by-kustomize
           ports:
             - name: metrics
               containerPort: 8443

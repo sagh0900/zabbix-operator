@@ -423,3 +423,29 @@ func TestTemplateHash(t *testing.T) {
 		t.Error("hash ignores annotations")
 	}
 }
+
+// A removed pod that is still shutting down keeps the set from reporting that it is
+// empty, so a caller does not start what must wait for it.
+func TestTerminatingUnwantedPodIsReported(t *testing.T) {
+	h := newHarness(t)
+	h.reconcile(h.set("a", "zabbix-server-init-0"))
+	p := h.pod("zabbix-server-init-0")
+	p.Finalizers = []string{"test/hold"}
+	if err := h.c.Update(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	expectAction(t, h.reconcile(h.set("a")), "deleting zabbix-server-init-0")
+	st := h.reconcile(h.set("a"))
+	expectAction(t, st, "waiting for zabbix-server-init-0 to terminate")
+	if st.Converged {
+		t.Fatal("a set with a terminating pod must not report converged")
+	}
+	p = h.pod("zabbix-server-init-0")
+	p.Finalizers = nil
+	if err := h.c.Update(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.reconcile(h.set("a")); !st.Converged || st.Action != "" {
+		t.Fatalf("status %+v after the pod is gone", st)
+	}
+}

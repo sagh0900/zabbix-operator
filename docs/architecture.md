@@ -222,7 +222,8 @@ DaemonSet does and reimplementing it adds risk without benefit.
   another eligible node.
 - Server, web and web service Pods get a soft anti-affinity across nodes by default, so
   replicas spread when the cluster allows it; `affinity` overrides it.
-- Server Pods carry `zabbix.io/role=active|standby`, kept current without restarting them.
+- Server Pods carry `zabbix.io/role=active|standby`, kept current without restarting them;
+  the server Service selects the active one.
 - While the database is not `Ready`, or an upgrade step owns the Pods, rolling is put on
   hold: nothing is created, replaced or scaled down, and `phaseReason` says why.
 
@@ -257,13 +258,31 @@ connection, HA node name and address) always win. The operator records a hash of
 referenced ConfigMap and Secret on the Pods, so changing the tuning Secret rolls the
 servers one at a time, standby first.
 
-Only the active HA node listens on port 10051; standby nodes run just the HA manager. The
-server Pods therefore have a TCP **readiness** probe on 10051 and no liveness probe on that
-port. The `<system>-server` Service selects all server Pods, but only the active one is Ready,
-so the Service, and any LoadBalancer IP in front of it, always routes to the active node.
-When the active node fails or steps down, its listener closes, its readiness fails within
-seconds and the new active node becomes Ready. Proxies and agents therefore always reach the
-active node through one stable address.
+Server Pods are routed the way CloudNativePG routes its primary:
+
+- **Readiness means healthy, not active.** The readiness probe runs
+  `zabbix_server -R ha_status`, which answers on active and standby nodes alike, so every
+  healthy server Pod shows `1/1`.
+- **The operator labels the active node.** Only the active HA node listens on 10051; standby
+  nodes run just the HA manager. Every 2 seconds, and on every Pod event, the operator
+  connects to port 10051 on each server Pod's IP and sets `zabbix.io/role=active` on the one
+  that accepts, `zabbix.io/role=standby` on the others. Labels change without restarting Pods.
+- **The Service selects the role.** `<system>-server` selects `zabbix.io/role=active`, like
+  CNPG's `-rw` Service selects `cnpg.io/instanceRole=primary`. Proxies and agents reach the
+  active node through one stable address, and any LoadBalancer IP in front of it.
+
+After a clean shutdown of the active node (a deleted or replaced Pod), Zabbix promotes a
+standby within about 5 seconds and the Service follows within about 2 more; measured on a
+live cluster: the endpoint moved after 7.5 seconds. After a crash, Zabbix waits for its
+failover delay (default 1 minute) before promoting a standby. When no node is active, the
+Service has no endpoint, `ServerActive` is False and a Warning event `ActiveServerLost` is
+recorded; `ActiveServer` events record each new active node.
+
+If the operator itself is unavailable, running Zabbix Pods are not affected and Zabbix still
+fails over internally; only the Service keeps pointing at the previous active node until
+the operator is back. The operator connects to Pod IPs directly, which Kubernetes allows by
+default; clusters with default-deny NetworkPolicies need a rule allowing the operator to
+reach server Pods on 10051.
 
 Zabbix itself guarantees that only one node is active: nodes heartbeat through the
 `ha_node` table, and an active node that loses the database for longer than the failover
