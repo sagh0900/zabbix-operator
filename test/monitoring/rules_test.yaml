@@ -318,3 +318,21 @@ tests:
               summary: Zabbix agents missing on some nodes
               description: The agent of zabbix/zabbix has been ready on fewer nodes than desired for 15 minutes.
               runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixagentnodesmissing
+
+  - name: proxy registration failing
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_proxy_registration_failing{namespace="zabbix",system="zabbix"}'
+        values: '0x3 1x20'
+    alert_rule_test:
+      - eval_time: 17m
+        alertname: ZabbixProxyRegistrationFailing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ZabbixProxyRegistrationFailing
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix }
+            exp_annotations:
+              summary: Zabbix proxy registration failing
+              description: Proxy registration of zabbix/zabbix has failed for 15 minutes; new or changed proxies are not registered in Zabbix.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixproxyregistrationfailing

@@ -101,6 +101,15 @@ spec:
             summary: Zabbix agents missing on some nodes
             description: The agent of {{ $labels.namespace }}/{{ $labels.system }} has been ready on fewer nodes than desired for 15 minutes.
             runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixagentnodesmissing
+        - alert: ZabbixProxyRegistrationFailing
+          expr: zabbix_operator_proxy_registration_failing == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix proxy registration failing
+            description: Proxy registration of {{ $labels.namespace }}/{{ $labels.system }} has failed for 15 minutes; new or changed proxies are not registered in Zabbix.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixproxyregistrationfailing
         - alert: ZabbixPodReplacementsHigh
           expr: increase(zabbix_operator_pod_replacements_total{reason="failed"}[30m]) > 5
           labels:

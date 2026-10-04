@@ -141,6 +141,26 @@ var (
 	}, []string{labelNamespace, labelSystem})
 )
 
+var (
+	// ProxiesRegistered is the number of proxies the system keeps registered in Zabbix.
+	ProxiesRegistered = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "proxies_registered",
+		Help: "Proxies the ZabbixSystem keeps registered in Zabbix (only while registration is enabled).",
+	}, []string{labelNamespace, labelSystem})
+
+	// ProxyRegistrationFailing is 1 while the last proxy registration sync failed.
+	ProxyRegistrationFailing = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "proxy_registration_failing",
+		Help: "1 while the last proxy registration sync failed (only while registration is enabled).",
+	}, []string{labelNamespace, labelSystem})
+
+	// ProxyRegistrationSyncs counts proxy registration syncs.
+	ProxyRegistrationSyncs = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Name: "proxy_registration_syncs_total",
+		Help: "Proxy registration syncs with the Zabbix API, by result (succeeded or failed).",
+	}, []string{labelNamespace, labelSystem, "result"})
+)
+
 // systemCollectors are every metric labelled by a ZabbixSystem.
 var systemCollectors = []interface {
 	prometheus.Collector
@@ -148,7 +168,7 @@ var systemCollectors = []interface {
 }{
 	SystemPhase, SystemInfo, ComponentPodsDesired, ComponentPodsReady, PodReplacements, ServerActiveNodes,
 	ServerFailovers, UpgradeInProgress, UpgradeBlocked, JobRuns, HANodeGCRowsDeleted, HANodeGCLastSuccess,
-	AgentNodesDesired, AgentNodesReady,
+	AgentNodesDesired, AgentNodesReady, ProxiesRegistered, ProxyRegistrationFailing, ProxyRegistrationSyncs,
 }
 
 func init() {
@@ -191,6 +211,14 @@ func DeleteAgent(ns, name string) {
 	labels := prometheus.Labels{labelNamespace: ns, labelSystem: name}
 	AgentNodesDesired.DeletePartialMatch(labels)
 	AgentNodesReady.DeletePartialMatch(labels)
+}
+
+// DeleteRegistration removes the registration gauges of a system whose registration is
+// disabled.
+func DeleteRegistration(ns, name string) {
+	labels := prometheus.Labels{labelNamespace: ns, labelSystem: name}
+	ProxiesRegistered.DeletePartialMatch(labels)
+	ProxyRegistrationFailing.DeletePartialMatch(labels)
 }
 
 // DeleteSystem removes every series of a deleted ZabbixSystem.

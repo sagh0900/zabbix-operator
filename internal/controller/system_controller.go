@@ -52,6 +52,7 @@ import (
 	"github.com/sagh0900/zabbix-operator/internal/jobs"
 	"github.com/sagh0900/zabbix-operator/internal/metrics"
 	"github.com/sagh0900/zabbix-operator/internal/podset"
+	"github.com/sagh0900/zabbix-operator/internal/registration"
 	"github.com/sagh0900/zabbix-operator/internal/system"
 	"github.com/sagh0900/zabbix-operator/internal/zabbix"
 )
@@ -90,6 +91,11 @@ type SystemReconciler struct {
 	countedJobs sync.Map
 	// Now returns the current time; tests replace it.
 	Now func() time.Time
+	// ZabbixAPI connects to the Zabbix API; nil means the HTTP client. Tests replace it.
+	ZabbixAPI func(url, token string) registration.API
+
+	// proxySyncs remembers the last proxy registration sync per system ("namespace/name").
+	proxySyncs sync.Map
 }
 
 // +kubebuilder:rbac:groups=zabbix.io,resources=zabbixsystems,verbs=get;list;watch
@@ -138,6 +144,8 @@ type observation struct {
 	serverPods []string     // names of live server pods
 	step       zabbixv1alpha1.UpgradeStep
 	target     string // UpgradeTarget to record
+	// registration is the proxy registration outcome; nil leaves the status unchanged.
+	registration *registrationResult
 }
 
 // Reconcile moves one ZabbixSystem one step towards its spec.
@@ -147,6 +155,7 @@ func (r *SystemReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if apierrors.IsNotFound(err) {
 			metrics.DeleteSystem(req.Namespace, req.Name)
 			r.lastActive.Delete(req.String())
+			r.proxySyncs.Delete(req.String())
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -202,6 +211,9 @@ func (r *SystemReconciler) reconcileSystem(ctx context.Context, sys *zabbixv1alp
 		requeue, _, err := r.converge(ctx, sys, db, running, running, hold, obs)
 		if err == nil && obs.phase == zabbixv1alpha1.PhaseRunning {
 			err = r.collectHANodes(ctx, sys, db, obs)
+		}
+		if err == nil && hold == "" {
+			r.reconcileRegistration(ctx, sys, obs)
 		}
 		// After the servers of an upgrade, the frontend and web service still roll; the
 		// upgrade is reported until every component has settled.
@@ -749,6 +761,20 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 	} else {
 		set(zabbixv1alpha1.SystemConflict, false, "NoConflict", "")
 	}
+	if reg := obs.registration; reg != nil {
+		switch {
+		case reg.clear:
+			st.RegisteredProxies = nil
+			meta.RemoveStatusCondition(&st.Conditions, zabbixv1alpha1.SystemProxiesRegistered)
+		default:
+			if reg.registered != nil {
+				st.RegisteredProxies = reg.registered
+			}
+			if c := reg.condition; c != nil {
+				set(c.Type, c.Status == metav1.ConditionTrue, c.Reason, c.Message)
+			}
+		}
+	}
 
 	if equality.Semantic.DeepEqual(st, sys.Status) {
 		return nil
@@ -799,7 +825,7 @@ func (r *SystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // referencedKeys indexes a system by every Secret and ConfigMap its pods read, plus the
-// database's credentials and TLS Secrets.
+// database's credentials and TLS Secrets and the proxy registration's token and list.
 func referencedKeys(o client.Object) []string {
 	sys := o.(*zabbixv1alpha1.ZabbixSystem)
 	var keys []string
@@ -816,6 +842,14 @@ func referencedKeys(o client.Object) []string {
 		}
 		for _, n := range cms {
 			keys = append(keys, "ConfigMap/"+n)
+		}
+	}
+	if reg := sys.Spec.ProxyRegistration; reg.Enabled {
+		if reg.APITokenSecretRef != nil {
+			keys = append(keys, "Secret/"+reg.APITokenSecretRef.Name)
+		}
+		if reg.ConfigMapRef != nil {
+			keys = append(keys, "ConfigMap/"+reg.ConfigMapRef.Name)
 		}
 	}
 	return keys
