@@ -1289,3 +1289,18 @@ func TestSystem_Upgrade70To74NeedsApproval(t *testing.T) {
 	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "7.4" })
 	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "Upgrading from 7.0.25 to 7.4.7")
 }
+
+// Jobs pull the operator image with the server's pull secrets, so a private registry works
+// for them too.
+func TestSystem_JobsUseServerPullSecrets(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	readyDatabase(t, ns)
+	createSystem(t, ns, "7.0.25", func(s *zabbixv1alpha1.ZabbixSystem) {
+		s.Spec.Server.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "registry"}}
+	})
+	job := pendingJob(t, ns, jobs.CommandPrecheck)
+	if ps := job.Spec.Template.Spec.ImagePullSecrets; len(ps) != 1 || ps[0].Name != "registry" {
+		t.Errorf("precheck pull secrets %v", ps)
+	}
+}

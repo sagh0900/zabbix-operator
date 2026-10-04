@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
 	"github.com/sagh0900/zabbix-operator/internal/jobs"
 	"github.com/sagh0900/zabbix-operator/internal/metrics"
 )
@@ -38,6 +39,11 @@ const retryFailedJobAfter = time.Minute
 // runJob makes sure the Job for spec exists and returns its result once it has finished;
 // nil means it is still running.
 func (r *SystemReconciler) runJob(ctx context.Context, spec jobs.Spec) (*jobs.Result, error) {
+	// Jobs run the operator image; they pull it with the server's pull secrets, which
+	// cover the usual case of one private registry or mirror for every image.
+	if sys, ok := spec.Owner.(*zabbixv1alpha1.ZabbixSystem); ok && spec.ImagePullSecrets == nil {
+		spec.ImagePullSecrets = sys.Spec.Server.ImagePullSecrets
+	}
 	want, err := jobs.Build(spec, r.Scheme)
 	if err != nil {
 		return nil, err

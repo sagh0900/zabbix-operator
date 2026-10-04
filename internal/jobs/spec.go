@@ -57,6 +57,8 @@ type Spec struct {
 	Host     string
 	// RunID distinguishes repeated runs with identical arguments, such as periodic ha-gc.
 	RunID string
+	// ImagePullSecrets let the Job pull Image from a private registry.
+	ImagePullSecrets []corev1.LocalObjectReference
 }
 
 // Name returns a deterministic Job name: the same inputs always give the same Job, so
@@ -148,6 +150,7 @@ func Build(s Spec, scheme *runtime.Scheme) (*batchv1.Job, error) {
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyNever,
 					AutomountServiceAccountToken: ptr.To(false),
+					ImagePullSecrets:             s.ImagePullSecrets,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:   ptr.To(true),
 						RunAsUser:      ptr.To[int64](nonRootUID),

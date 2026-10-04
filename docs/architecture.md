@@ -477,7 +477,8 @@ it under *Users → API tokens* and store it in the Secret.
 Jobs run the operator image as `manager job <command>`, so the project ships a single
 image. Each Job has a controller owner reference, a deterministic name (the same inputs
 always give the same Job), a deadline and a TTL; it runs non-root with a read-only root
-filesystem and no API token. Credentials are mounted as files from the ZabbixDatabase's
+filesystem and no API token, and pulls the operator image with the server's
+`imagePullSecrets`. Credentials are mounted as files from the ZabbixDatabase's
 Secret, never passed as environment variables, and TLS settings come from
 `ZabbixDatabase.spec.tls`. A Job reports a JSON result in its termination message, which
 the operator reads from the pod status.
