@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zabbix Operator · Pay attention</title>
+<meta name="description" content="A Kubernetes operator for Zabbix on CloudNativePG, built from an incident: native HA routing, guarded upgrades, safe suspend, and backups that come first.">
+<meta property="og:title" content="Zabbix Operator · Pay attention">
+<meta property="og:description" content="A Kubernetes operator for Zabbix on CloudNativePG, built from an incident.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23d40000'/%3E%3Cpath d='M9 9h14v3L13.5 20H23v3H9v-3l9.5-8H9z' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #fbfaf8; --surface: #ffffff; --ink: #1b1b1f; --muted: #5d5d66; --line: #e6e3de;
+  --accent: #c8102e; --accent-ink: #ffffff; --code-bg: #f3f1ed; --ok: #1f7a4d; --standby: #8a8a94;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111114; --surface: #18181c; --ink: #ececf1; --muted: #a2a2ad; --line: #2c2c33;
+    --accent: #ff4d5e; --accent-ink: #111114; --code-bg: #1f1f25; --ok: #4cc38a; --standby: #7c7c88;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111114; --surface: #18181c; --ink: #ececf1; --muted: #a2a2ad; --line: #2c2c33;
+  --accent: #ff4d5e; --accent-ink: #111114; --code-bg: #1f1f25; --ok: #4cc38a; --standby: #7c7c88;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.65 var(--sans); }
+a { color: var(--accent); text-underline-offset: 3px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+.prose { max-width: 680px; margin: 0 auto; padding: 0 20px; }
+header.top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; color: var(--ink); text-decoration: none; }
+.brand-mark { width: 28px; height: 28px; border-radius: 6px; background: var(--accent); color: #fff; display: grid; place-items: center; font: 700 15px var(--sans); }
+nav a { color: var(--muted); text-decoration: none; margin-left: 18px; font-size: 15px; }
+nav a:hover { color: var(--ink); }
+
+.hero { padding: 72px 0 56px; border-bottom: 1px solid var(--line); }
+.kicker { font: 600 13px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(44px, 9vw, 92px)/1.02 var(--serif); letter-spacing: -.02em; margin: 18px 0 20px; }
+.lead { font: 400 clamp(19px, 2.4vw, 23px)/1.5 var(--serif); color: var(--muted); max-width: 640px; margin: 0; }
+.actions { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-block; padding: 11px 20px; border-radius: 8px; font-weight: 600; font-size: 15px; text-decoration: none; border: 1px solid var(--line); color: var(--ink); background: var(--surface); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+.story { padding: 72px 0 24px; }
+.story h2 { font: 700 30px/1.25 var(--serif); margin: 56px 0 14px; }
+.story h2:first-child { margin-top: 0; }
+.story p { font: 400 20px/1.75 var(--serif); margin: 0 0 22px; }
+.story .dropcap::first-letter { float: left; font: 700 64px/.85 var(--serif); padding: 8px 10px 0 0; color: var(--accent); }
+.pull { margin: 40px 0; padding: 4px 0 4px 22px; border-left: 3px solid var(--accent); font: italic 400 24px/1.5 var(--serif); }
+.timeline { list-style: none; margin: 8px 0 28px; padding: 0; font: 15px/1.5 var(--sans); }
+.timeline li { display: grid; grid-template-columns: 92px 1fr; gap: 14px; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+.timeline b { font-variant-numeric: tabular-nums; color: var(--accent); }
+
+.routing { margin: 34px 0; padding: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.routing svg { width: 100%; height: auto; display: block; }
+.routing figcaption { font: 14px/1.5 var(--sans); color: var(--muted); margin-top: 12px; }
+
+.numbers { padding: 56px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface); }
+.numbers .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+.num b { display: block; font: 700 40px/1.1 var(--serif); }
+.num span { font-size: 14px; color: var(--muted); }
+
+.features { padding: 72px 0; }
+.features h2, .start h2 { font: 700 34px/1.2 var(--serif); margin: 0 0 8px; }
+.sub { color: var(--muted); margin: 0 0 36px; }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+.card h3 { margin: 0 0 8px; font-size: 17px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
+.card .why { display: block; margin-top: 12px; font-size: 13px; color: var(--accent); font-weight: 600; }
+
+.start { padding: 0 0 80px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto; font: 14px/1.6 var(--mono); }
+.links { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
+.links a { display: block; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); text-decoration: none; font-size: 15px; }
+.links a small { display: block; color: var(--muted); font-size: 13px; }
+
+footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+
+@media (max-width: 860px) {
+  .cards { grid-template-columns: 1fr 1fr; }
+  .numbers .grid, .links { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  nav a:not(:last-child) { display: none; }
+  .hero { padding: 48px 0 40px; }
+  .story p { font-size: 18px; }
+  .cards, .numbers .grid, .links { grid-template-columns: 1fr; }
+  .timeline li { grid-template-columns: 76px 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">Z</span>Zabbix Operator</a>
+    <nav>
+      <a href="#story">Story</a>
+      <a href="#features">What it does</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/sagh0900/zabbix-operator">GitHub</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="kicker">Kubernetes · CloudNativePG · Zabbix · Apache 2.0</div>
+    <h1>Pay attention.</h1>
+    <p class="lead">A Kubernetes operator that runs Zabbix on CloudNativePG: native HA that routes to the node that is actually active, upgrades that stop before they hurt, and a database that always comes first. It started with an incident.</p>
+    <div class="actions">
+      <a class="btn primary" href="#start">Get started</a>
+      <a class="btn" href="#story">Read the story</a>
+      <a class="btn" href="https://github.com/sagh0900/zabbix-operator">View on GitHub</a>
+    </div>
+  </section>
+</div>
+
+<article class="story" id="story">
+  <div class="prose">
+    <h2>Attention</h2>
+    <p class="dropcap">In 2017, <em>Attention Is All You Need</em> turned intelligence into something you can commoditize. Models now help improve their own successors, and the time between releases keeps shrinking. Machines are getting very good at paying attention.</p>
+    <p>So I keep asking myself: how much attention do we pay, inward and outward? To our work, to the people it touches, to what is actually true? Or do we keep rolling on borrowed beliefs, assumptions and biases, limited by what we <em>think we know</em>, which often has nothing to do with reality?</p>
+
+    <h2>The incident</h2>
+    <p>In late 2025 I caused a Zabbix incident. Proxies were timing out against the server, and I added session affinity to the Zabbix Kubernetes Service to fix it. It did the opposite: it pushed the proxies into backoff.</p>
+    <p>A lot of people were pulled in, most with no idea where it came from, and it took a long time to trace it back to the change and to me. I reverted it, and I had to answer for something I never intended.</p>
+    <p>I took it personally. Not as blame, but as a question: <strong>how do I solve this next time without putting myself in the same spot again?</strong></p>
+
+    <h2>What was really wrong</h2>
+    <p>Session affinity was a patch on a problem nobody had named. Zabbix runs in native HA: one server node is active and accepts connections; the others wait as standbys and do not listen at all. The Service in front of them selected every server pod, so a share of every new proxy and agent connection landed on a node that would never answer.</p>
+    <p>The fix is not a setting on the Service. It is making the active node explicit, the way CloudNativePG makes the primary explicit.</p>
+
+    <figure class="routing">
+      <svg viewBox="0 0 640 210" role="img" aria-label="The zabbix-server Service routes only to the active server pod; the standby pod is healthy but receives no traffic.">
+        <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+        <g font-family="system-ui, sans-serif" font-size="13" fill="currentColor" style="color: var(--ink)">
+          <rect x="10" y="80" width="140" height="50" rx="8" fill="none" stroke="currentColor" stroke-opacity=".35"/>
+          <text x="80" y="102" text-anchor="middle" font-weight="600">Proxies, agents,</text>
+          <text x="80" y="119" text-anchor="middle" font-weight="600">frontend</text>
+          <rect x="230" y="80" width="150" height="50" rx="8" fill="none" stroke="currentColor" stroke-opacity=".35"/>
+          <text x="305" y="101" text-anchor="middle" font-weight="600">zabbix-server</text>
+          <text x="305" y="118" text-anchor="middle" opacity=".7">role = active</text>
+          <line x1="150" y1="105" x2="226" y2="105" stroke="currentColor" stroke-width="2" marker-end="url(#arr)"/>
+          <rect x="460" y="30" width="170" height="54" rx="8" fill="none" style="stroke:var(--ok)" stroke-width="2"/>
+          <text x="545" y="52" text-anchor="middle" font-weight="600">zabbix-server-0</text>
+          <text x="545" y="70" text-anchor="middle" style="fill:var(--ok)">active · 1/1 · listens</text>
+          <rect x="460" y="126" width="170" height="54" rx="8" fill="none" style="stroke:var(--standby)" stroke-dasharray="5 4" stroke-width="2"/>
+          <text x="545" y="148" text-anchor="middle" font-weight="600">zabbix-server-1</text>
+          <text x="545" y="166" text-anchor="middle" style="fill:var(--standby)">standby · 1/1 · no traffic</text>
+          <line x1="380" y1="98" x2="456" y2="62" stroke-width="2.5" marker-end="url(#arr)" style="stroke:var(--ok); color: var(--ok)"/>
+        </g>
+      </svg>
+      <figcaption>The operator probes every server pod and labels the one that accepts connections <code>zabbix.io/role=active</code>. The Service selects that label, like CloudNativePG's <code>-rw</code> Service follows the primary. Standbys stay healthy (1/1) and never receive traffic; after a failover the Service follows within seconds.</figcaption>
+    </figure>
+
+    <h2>Building it, and moving the database</h2>
+    <p>So I built an operator, with AI-assisted coding, and ran it in test. One blocker remained: production Zabbix still ran on an external Patroni PostgreSQL cluster, and the operator builds on a CloudNativePG-managed one.</p>
+    <p>One Friday morning I decided that the day had come. An earlier attempt at logical replication had already failed; it failed for me too, ate time, and the weekend was coming. So I switched to physical replication.</p>
+    <ul class="timeline" aria-label="Database migration timeline">
+      <li><b>40 min</b><span>Physical copy of 500 GB into a CloudNativePG replica.</span></li>
+      <li><b>30 min</b><span>WAL replay to catch up: a standby in about 1 hour 10 minutes.</span></li>
+      <li><b>40 min</b><span>A full backup to S3 before touching anything.</span></li>
+      <li><b>minutes</b><span>The cutover, agreed beforehand with the team that would feel it.</span></li>
+      <li><b>after</b><span>Another full backup; daily scheduled backups and continuous WAL archiving for point-in-time recovery since.</span></li>
+    </ul>
+    <p>Everything was ready by the end of the day, but the cutover was the part that scared me. I did not want a second incident. So before switching, I went to the person whose team relies on Zabbix every day, told them what I was doing and that Zabbix would be down for a few minutes, and we agreed on it together. The switch took a few minutes, and it worked.</p>
+
+    <h2>What I would defend</h2>
+    <p>My instinct comes from CI/CD: prove it in lower environments, roll it out, and tell the people who use it about the brief disruption instead of waiting for a window. I did not take this one through the formal change process, and that is not the part I would defend.</p>
+    <p class="pull">The conversation is. Telling the person who would feel it is what made this a change, and not a repeat of the incident.</p>
+    <p>Attention, it turns out, is also something you pay to other people.</p>
+
+    <h2>Where it is now</h2>
+    <p>The operator now runs the test environment. It took over a running Zabbix 7.4.7 installation on the monitoring team's real data, kept their address, certificate and history, and upgraded it to 8.0.0rc1 in about a minute. Then it took over the proxies and agents from a separate Helm release. Every step was backed up first, measured, and written into the documentation and the tests, including the mistakes I found along the way.</p>
+    <p>That incident could have stayed a bad memory. Instead I paid attention to it, and it became something other people can use.</p>
+  </div>
+</article>
+
+<section class="numbers" aria-label="Measured results">
+  <div class="wrap grid">
+    <div class="num"><b>60 s</b><span>7.4.7 → 8.0.0rc1 schema upgrade on a 12 GB database, servers stopped for about 35 s</span></div>
+    <div class="num"><b>25 s</b><span>to adopt a running 7.4.7 installation without touching its schema</span></div>
+    <div class="num"><b>~7.5 s</b><span>until the Service routes to a new active node after a clean failover</span></div>
+    <div class="num"><b>55 MB/s</b><span>lz4 base backups to S3, against 2 MB/s with gzip</span></div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="sub">Each feature answers something that went wrong, or nearly did.</p>
+    <div class="cards">
+      <div class="card"><h3>Routing you can see</h3><p>The server Service follows the active HA node through a role label. Standbys are Ready and never receive connections, so no setting on the Service has to compensate.</p><span class="why">Because session affinity was the wrong fix</span></div>
+      <div class="card"><h3>Upgrades with guardrails</h3><p>Patch releases roll one server at a time, standby first. Line upgrades (7.x → 8.0) wait for approval, a recent CNPG backup, healthy replicas and a supported PostgreSQL. A blocked upgrade changes nothing.</p><span class="why">Because irreversible steps need a way back</span></div>
+      <div class="card"><h3>The database first</h3><p>A thin view of a CloudNativePG cluster decides when Zabbix may connect. During switchovers and PostgreSQL upgrades Zabbix keeps running and reconnects; the operator never writes to CNPG.</p><span class="why">Because the data outlives every pod</span></div>
+      <div class="card"><h3>Pods like CloudNativePG</h3><p>Stable pod names, one replacement at a time, disruption budgets, no Deployments. Stale <code>ha_node</code> rows are cleaned on a schedule.</p><span class="why">Because HA node names should not drift</span></div>
+      <div class="card"><h3>Suspend on purpose</h3><p><code>spec.suspend</code> stops everything in a safe order, frontend first and the active server last, each node marked stopped in Zabbix. Resume brings it back.</p><span class="why">Because maintenance should be calm</span></div>
+      <div class="card"><h3>Proxies and agents</h3><p>In-cluster proxies and node agents, with optional registration in Zabbix through its API. Only what the operator registered is ever changed.</p><span class="why">Because hand-made config must stay untouched</span></div>
+      <div class="card"><h3>Says what is wrong</h3><p>Conditions, events and per-component messages name the stuck pod and why: unschedulable, image pull, crash loop. Prometheus metrics, alerts with runbooks and a Grafana dashboard come with it.</p><span class="why">Because nobody should have to guess where it came from</span></div>
+      <div class="card"><h3>Versions as data</h3><p>Zabbix 7.0, 7.2, 7.4 and 8.0 are built in. New lines can be enabled through a ConfigMap and are flagged as not yet validated, with a full backup required before upgrading.</p><span class="why">Because the next release should not wait for the operator</span></div>
+      <div class="card"><h3>Adopt, don't recreate</h3><p>Point it at an existing database and it adopts the schema. A migration guide covers moving from plain manifests, Helm, or another operator.</p><span class="why">Because real systems already exist</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="start" id="start">
+  <div class="wrap">
+    <h2>Get started</h2>
+    <p class="sub">Requires Kubernetes 1.29+ and CloudNativePG.</p>
+<pre><code>VERSION=v0.1.0
+kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/$VERSION/install.yaml
+
+# a CNPG cluster and its ZabbixDatabase, then Zabbix itself
+kubectl apply -f https://raw.githubusercontent.com/sagh0900/zabbix-operator/main/examples/database.yaml
+kubectl apply -f https://raw.githubusercontent.com/sagh0900/zabbix-operator/main/examples/system.yaml
+kubectl -n zabbix get zsys -w</code></pre>
+    <div class="links">
+      <a href="https://github.com/sagh0900/zabbix-operator/blob/main/docs/install.md">Installation<small>Operator, database, first system</small></a>
+      <a href="https://github.com/sagh0900/zabbix-operator/blob/main/docs/upgrades.md">Upgrades<small>Patch, line, PostgreSQL</small></a>
+      <a href="https://github.com/sagh0900/zabbix-operator/blob/main/docs/migration.md">Migration<small>From manifests, Helm, operators</small></a>
+      <a href="https://github.com/sagh0900/zabbix-operator/blob/main/docs/architecture.md">Architecture<small>Every field and behaviour</small></a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Zabbix Operator · Apache License 2.0</span>
+    <span>Zabbix is a trademark of Zabbix LLC. This is an independent project.</span>
+    <a href="https://github.com/sagh0900/zabbix-operator">github.com/sagh0900/zabbix-operator</a>
+  </div>
+</footer>
+
+</body>
+</html>

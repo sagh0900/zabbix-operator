@@ -9,6 +9,8 @@ proxies, agents) on a PostgreSQL database managed by
   (for example 7.0 → 7.4, 7.4 → 8.0).
 - One image: `ghcr.io/sagh0900/zabbix-operator`.
 
+Why it exists: [sagh0900.github.io/zabbix-operator](https://sagh0900.github.io/zabbix-operator/).
+
 ## Quick start
 
 Requires CloudNativePG.
