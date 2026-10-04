@@ -11,13 +11,14 @@ user and are only *referenced*.
 |---|---|
 | Zabbix server (native HA), frontend, web service, proxies, agents | Creating or changing CNPG `Cluster`, `Pooler`, `Backup`, `Database` objects |
 | Schema bootstrap of an empty database, schema upgrades | Creating database roles or passwords (use CNPG `managed.roles`) |
-| Patch upgrades inside an LTS line, the 7.0 → 8.0 major upgrade | Zabbix configuration objects (hosts, templates, users) |
+| Patch upgrades inside a line, upgrades to any newer line (7.x → 7.y, 7.x → 8.0) | Zabbix configuration objects (hosts, templates, users) |
 | Cleaning stale `ha_node` rows | Certificates (Ingress TLS references an existing Secret) |
 | Services and Ingresses for the components | |
 | Optional registration of proxies in Zabbix | |
 
-Supported Zabbix lines: **7.0 LTS** and **8.0 LTS**. Any patch release of a supported line
-works without an operator change. A ZabbixSystem asking for another line is accepted by the
+Supported Zabbix lines: **7.0** (LTS), **7.2**, **7.4** and **8.0** (LTS). Any patch release of
+a supported line works without an operator change, and a system can be upgraded from any
+supported line to any newer one. A ZabbixSystem asking for another line is accepted by the
 API and reported as `Blocked` ("Zabbix 9.0 is not supported by this operator version"),
 and nothing is deployed for it.
 
@@ -506,7 +507,7 @@ across patch versions.
 
 Agents are not touched; their image is set separately.
 
-### Major upgrade (7.0 → 8.0)
+### Line upgrade (for example 7.0 → 7.4, 7.4 → 8.0)
 
 A schema upgrade changes the database irreversibly; the only way back is a database
 restore. Before anything stops, the operator checks, in this order, and reports the first

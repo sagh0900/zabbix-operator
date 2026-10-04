@@ -409,7 +409,7 @@ func TestSystem_UnsupportedLineIsBlocked(t *testing.T) {
 	ns := newNamespace(t)
 	readyDatabase(t, ns)
 	createSystem(t, ns, "9.0.0", nil)
-	sys := waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked, "Zabbix 9.0 is not supported by this operator version (supported lines: 7.0, 8.0)")
+	sys := waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked, "Zabbix 9.0 is not supported by this operator version (supported lines: 7.0, 7.2, 7.4, 8.0)")
 	if c := meta.FindStatusCondition(sys.Status.Conditions, zabbixv1alpha1.SystemUpgradeBlocked); c == nil || c.Reason != "UnsupportedVersion" {
 		t.Errorf("UpgradeBlocked %+v", c)
 	}
@@ -1248,4 +1248,44 @@ func TestSystem_AgentDaemonSetConflict(t *testing.T) {
 	}
 	installedUntilConflict()
 	waitPhase(t, ns, zabbixv1alpha1.PhaseDegraded, "Conflict: DaemonSet zabbix-agent exists and is not managed by this ZabbixSystem")
+}
+
+// A 7.4 installation is adopted and runs on 7.4; moving it to 8.0 is a schema upgrade that
+// needs approval for the 8.0 line.
+func TestSystem_Adopt74AndUpgradeTo80(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.4.7", nil)
+	if image(getPod(t, ns, "zabbix-server-0")) != "zabbix/zabbix-server-pgsql:ubuntu-7.4.7" ||
+		image(getPod(t, ns, "zabbix-web-0")) != "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4.7" {
+		t.Fatal("7.4 images not used")
+	}
+	createBackup(t, ns, "before-8", time.Now().Add(-time.Hour))
+
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Version = "8.0.0rc1" })
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SchemaUpgrade)})
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked,
+		`Upgrading from 7.4 to 8.0 changes the database schema irreversibly; set spec.upgrade.approveMajor: "8.0" to approve it`)
+
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "8.0" })
+	waitPod(t, ns, "zabbix-server-0", false)
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "Upgrading from 7.4.7 to 8.0.0rc1: clearing the HA node table")
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandHAReset, OK: true, Deleted: 2})
+	if image(waitPod(t, ns, "zabbix-server-init-0", true)) != "zabbix/zabbix-server-pgsql:ubuntu-8.0.0rc1" {
+		t.Error("schema upgrade must run the 8.0.0rc1 server")
+	}
+}
+
+// Upgrading between 7.x lines (7.0 → 7.4) is a schema upgrade approved for the 7.4 line.
+func TestSystem_Upgrade70To74NeedsApproval(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", func(s *zabbixv1alpha1.ZabbixSystem) {
+		s.Spec.Upgrade.RequireBackupWithin = &metav1.Duration{}
+	})
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Version = "7.4.7" })
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SchemaUpgrade)})
+	waitPhase(t, ns, zabbixv1alpha1.PhaseBlocked, `set spec.upgrade.approveMajor: "7.4" to approve it`)
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "7.4" })
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "Upgrading from 7.0.25 to 7.4.7")
 }

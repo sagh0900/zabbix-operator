@@ -6,7 +6,7 @@ each step is in [Architecture](architecture.md#lifecycle).
 | Change | What the operator does | Zabbix interruption |
 |---|---|---|
 | Zabbix patch release (7.0.x → 7.0.y) | Rolls servers one at a time, standby first; then the frontend, web service and proxies | One HA failover |
-| Zabbix major release (7.0 → 8.0) | Checks, stops all servers, upgrades the schema with one standalone server, starts the HA servers, rolls the rest | All servers stopped for the schema upgrade |
+| Zabbix line upgrade (7.0 → 7.4, 7.x → 8.0) | Checks, stops all servers, upgrades the schema with one standalone server, starts the HA servers, rolls the rest | All servers stopped for the schema upgrade |
 | PostgreSQL minor or major release (through CNPG) | Nothing; holds rollouts while the database is not `Ready` | Zabbix reconnects by itself |
 | Operator release | Rolls only pods whose rendered template changed, one at a time | At most one HA failover |
 
@@ -27,7 +27,11 @@ kubectl -n zabbix get zsys zabbix -w
 The phase is `Upgrading` until every component has moved. Agents keep their own image
 (`agent.image`); change it separately.
 
-## Zabbix major release (7.0 → 8.0)
+## Zabbix line upgrade (7.x → 7.y, 7.x → 8.0)
+
+Moving to a newer release line (7.0, 7.2, 7.4, 8.0) upgrades the database schema. Any
+supported line can move directly to any newer one, for example 7.4 → 8.0; the steps are the
+same for every pair, and `approveMajor` names the target line.
 
 A schema upgrade changes the database irreversibly. The only way back is restoring a
 backup, so rehearse it on a restored copy of the database first: the duration depends on

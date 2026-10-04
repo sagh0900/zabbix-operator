@@ -48,7 +48,7 @@ func TestDecide(t *testing.T) {
 		{"downgrade", facts{versionNum: pg(17), mandatory: 7050195}, "7.0.25", false, "Downgrade", zabbix.Downgrade,
 			"the database schema (dbversion 7050195) is newer than Zabbix 7.0.25; Zabbix cannot downgrade"},
 		{"unsupported line", facts{versionNum: pg(17)}, "9.0.0", false, "UnsupportedVersion", "",
-			"Zabbix 9.0 is not supported by this operator version (supported lines: 7.0, 8.0)"},
+			"Zabbix 9.0 is not supported by this operator version (supported lines: 7.0, 7.2, 7.4, 8.0)"},
 		{"unsupported before replica", facts{versionNum: pg(17), inRecovery: true}, "9.0.0", false, "UnsupportedVersion", "", ""},
 		{"replica before old postgres", facts{versionNum: pg(14), inRecovery: true}, "8.0.0rc1", false, "NotPrimary", "", ""},
 	}
