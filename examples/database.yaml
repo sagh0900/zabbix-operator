@@ -1,0 +1,49 @@
+# A CloudNativePG cluster for Zabbix and the ZabbixDatabase that references it.
+# The operator never changes the Cluster; it only reads its status.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zabbix
+---
+# Credentials of the database owner. CNPG creates the role from it at bootstrap.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zabbix-db-credentials
+  namespace: zabbix
+type: kubernetes.io/basic-auth
+stringData:
+  username: zabbix
+  password: change-me
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: zabbix-pg
+  namespace: zabbix
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+  primaryUpdateMethod: switchover
+  storage:
+    size: 50Gi
+  bootstrap:
+    initdb:
+      database: zabbix
+      owner: zabbix
+      secret:
+        name: zabbix-db-credentials
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixDatabase
+metadata:
+  name: zabbix-db
+  namespace: zabbix
+spec:
+  clusterRef:
+    name: zabbix-pg            # host and directHost default to zabbix-pg-rw
+  credentialsRef:
+    secretName: zabbix-db-credentials
+  tls:                         # CNPG serves TLS and keeps its CA in <cluster>-ca
+    mode: verify-full
+    caSecretRef: { name: zabbix-pg-ca, key: ca.crt }

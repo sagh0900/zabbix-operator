@@ -8,30 +8,31 @@ proxies, agents) on a PostgreSQL database managed by
 - Zabbix 7.0 LTS and 8.0 LTS, including patch upgrades and the 7.0 → 8.0 upgrade.
 - One image: `ghcr.io/sagh0900/zabbix-operator`.
 
-See [docs/architecture.md](docs/architecture.md) for the design and
-[AGENTS.md](AGENTS.md) for contribution rules.
-
-## Install
+## Quick start
 
 Requires CloudNativePG.
 
 ```sh
-kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/vX.Y.Z/install.yaml
+VERSION=v0.1.0
+kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/$VERSION/install.yaml
+kubectl apply -f examples/database.yaml      # a CNPG cluster and its ZabbixDatabase
+kubectl apply -f examples/system.yaml        # Zabbix: two HA servers, frontend, web service
+kubectl -n zabbix get zsys -w
 ```
 
-## Monitoring
+## Documentation
 
-Optional; requires the Prometheus Operator CRDs.
+| Guide | Contents |
+|---|---|
+| [Installation](docs/install.md) | Requirements, operator, database, first system, monitoring, uninstall |
+| [Operations](docs/operations.md) | State, configuration, scaling, failover, maintenance, suspend, proxies, troubleshooting |
+| [Upgrades](docs/upgrades.md) | Zabbix patch and 7.0 → 8.0 upgrades, PostgreSQL upgrades, operator upgrades |
+| [Migration](docs/migration.md) | Moving a running plain-manifest or Helm installation to the operator |
+| [Alerts](docs/alerts.md) | Runbook for every alert |
+| [Architecture](docs/architecture.md) | The design, every field and behaviour |
+| [Examples](examples) | Manifests, validated against the CRDs by the test suite |
 
-```sh
-kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/vX.Y.Z/monitoring.yaml
-```
-
-It adds a ServiceMonitor, alerting rules ([runbook](docs/alerts.md)) and a Grafana
-dashboard ConfigMap labelled `grafana_dashboard: "1"`. Bind the
-`zabbix-operator-metrics-reader` ClusterRole to your Prometheus ServiceAccount (patch
-`zabbix-operator-metrics-reader-prometheus`) and add the labels your Prometheus selects
-on. `dashboard.json` is also published for other provisioning methods.
+[AGENTS.md](AGENTS.md) holds the contribution rules.
 
 ## Build
 

@@ -1,0 +1,10 @@
+# The smallest useful ZabbixSystem: two HA server nodes, the frontend and the web service.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSystem
+metadata:
+  name: zabbix
+  namespace: zabbix
+spec:
+  version: "7.0.25"
+  databaseRef:
+    name: zabbix-db

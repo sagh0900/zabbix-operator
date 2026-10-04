@@ -1,0 +1,97 @@
+# A production-shaped ZabbixSystem: tuning from a Secret, a LoadBalancer for proxies and
+# agents, the frontend behind an Ingress, in-cluster proxies, agents on every node and
+# proxy registration. Apply database.yaml first.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zabbix-server-tuning
+  namespace: zabbix
+stringData:                    # any ZBX_* variable of the server image; a change rolls the servers
+  ZBX_STARTPOLLERS: "50"
+  ZBX_CACHESIZE: 512M
+  ZBX_HISTORYCACHESIZE: 256M
+  ZBX_VALUECACHESIZE: 512M
+---
+# API token of a Zabbix user that may manage proxies (Users → API tokens).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zabbix-api-token
+  namespace: zabbix
+stringData:
+  token: replace-with-the-token
+---
+# Proxies outside the cluster to keep registered in Zabbix.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zabbix-proxies
+  namespace: zabbix
+data:
+  proxies.yaml: |
+    - name: proxy-branch1
+    - name: proxy-dmz
+      mode: passive
+      address: proxy-dmz.example.com
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSystem
+metadata:
+  name: zabbix
+  namespace: zabbix
+spec:
+  version: "7.0.25"
+  databaseRef:
+    name: zabbix-db
+  timezone: Europe/Stockholm
+  upgrade:
+    requireBackupWithin: 24h   # schema upgrades wait for a recent CNPG Backup
+
+  server:
+    replicas: 2
+    envFrom:
+      - secretRef: { name: zabbix-server-tuning }
+    resources:
+      requests: { cpu: "1", memory: 4Gi }
+      limits: { memory: 8Gi }
+    service:                   # proxies and agents outside the cluster send here
+      type: LoadBalancer
+      loadBalancerIP: 10.0.0.10
+
+  web:
+    replicas: 2
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+    ingress:
+      enabled: true
+      className: nginx
+      hosts:
+        - host: zabbix.example.com
+      tls:
+        - secretName: zabbix-tls
+          hosts: [zabbix.example.com]
+
+  webService:
+    replicas: 1
+
+  proxies:
+    - name: proxy-k8s          # instances proxy-k8s-0 and proxy-k8s-1
+      mode: active
+      replicas: 2
+      proxyGroup: k8s          # the instances share the load and fail over in Zabbix
+    - name: proxy-snmp
+      mode: passive
+
+  agent:                       # needs a namespace that allows privileged pods
+    enabled: true
+    image: zabbix/zabbix-agent2:ubuntu-7.0.25
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+
+  proxyRegistration:
+    enabled: true
+    apiTokenSecretRef: { name: zabbix-api-token, key: token }
+    configMapRef: { name: zabbix-proxies, key: proxies.yaml }
+    prune: true
