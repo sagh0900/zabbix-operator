@@ -122,3 +122,13 @@ credentials, TLS settings or network access to `directHost`.
 
 `ha-gc` has not succeeded for 30 minutes while the system runs, so rows of removed server
 Pods may stay in `ha_node`. Check the latest `ha-gc` Job and its result.
+
+## ZabbixAgentNodesMissing
+
+The agent DaemonSet has been ready on fewer nodes than it should run on for 15 minutes.
+
+1. `kubectl get daemonset <system>-agent -n <namespace>` and the events of its pods.
+2. Agents run with the node's network and process namespaces: the namespace must allow
+   that (Pod Security `privileged`), and the agent port 10050 must be free on every node.
+3. Nodes the agent should not run on are excluded with `agent.nodeSelector`,
+   `agent.affinity` or missing `agent.tolerations`.

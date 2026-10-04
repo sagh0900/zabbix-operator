@@ -56,6 +56,17 @@ const (
 	WebServicePort = 10053
 )
 
+// Environment variables and values shared by several Zabbix images.
+const (
+	envHostname   = "ZBX_HOSTNAME"
+	envServerHost = "ZBX_SERVER_HOST"
+	envServerPort = "ZBX_SERVER_PORT"
+	envTrue       = "true"
+	// anyAddress allows connections from any address; used where the peer is a server Pod
+	// whose IP changes.
+	anyAddress = "0.0.0.0/0,::/0"
+)
+
 // Paths where database TLS material is mounted in Zabbix containers.
 const (
 	tlsDir     = "/etc/zabbix-db-tls"
@@ -122,7 +133,7 @@ var operatorManagedKeys = []string{
 	"ZBX_HANODENAME", "ZBX_AUTOHANODENAME", "ZBX_NODEADDRESS",
 	"ZBX_DBTLSCONNECT", "ZBX_DBTLSCAFILE", "ZBX_DBTLSCERTFILE", "ZBX_DBTLSKEYFILE",
 	"ZBX_DB_ENCRYPTION", "ZBX_DB_CA_FILE", "ZBX_DB_CERT_FILE", "ZBX_DB_KEY_FILE", "ZBX_DB_VERIFY_HOST",
-	"ZBX_SERVER_HOST", "ZBX_SERVER_PORT",
+	envServerHost, envServerPort, envHostname, "ZBX_PROXYMODE",
 }
 
 // databaseEnv returns the connection variables common to server and frontend.

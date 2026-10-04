@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -318,5 +319,93 @@ func TestWebUsesServerService(t *testing.T) {
 	in.System.Spec.Server.Service.Port = 10061
 	if p := env(WebPod(in, "monitoring-web-0"))["ZBX_SERVER_PORT"].Value; p != "10061" {
 		t.Errorf("server port %q", p)
+	}
+}
+
+func TestProxyPods(t *testing.T) {
+	in := fixture()
+	in.System.Spec.Timezone = "Europe/Stockholm"
+	active := &zabbixv1alpha1.ProxySpec{Name: "dc1", Mode: zabbixv1alpha1.ProxyActive}
+	p := ProxyPod(in, active, ProxyPodName(active, 1))
+	e := env(p)
+	if p.Name != "dc1-1" || e["ZBX_HOSTNAME"].Value != "dc1-1" || e["ZBX_PROXYMODE"].Value != "0" ||
+		e["ZBX_SERVER_HOST"].Value != "zabbix-server:10051" || e["TZ"].Value != "Europe/Stockholm" {
+		t.Errorf("active proxy %s env %v", p.Name, e)
+	}
+	if p.Spec.Containers[0].Image != "zabbix/zabbix-proxy-sqlite3:ubuntu-7.0.25" {
+		t.Errorf("image %q", p.Spec.Containers[0].Image)
+	}
+	if p.Spec.Subdomain != "dc1" || p.Labels["app.kubernetes.io/name"] != "zabbix-proxy-dc1" {
+		t.Errorf("subdomain %q labels %v", p.Spec.Subdomain, p.Labels)
+	}
+	if p.Spec.Volumes[0].EmptyDir == nil || p.Spec.Containers[0].VolumeMounts[0].MountPath != "/var/lib/zabbix/db_data" ||
+		*p.Spec.SecurityContext.FSGroup != 1995 {
+		t.Error("the SQLite database must live in a writable emptyDir")
+	}
+	passive := &zabbixv1alpha1.ProxySpec{Name: "edge", Mode: zabbixv1alpha1.ProxyPassive}
+	e = env(ProxyPod(in, passive, ProxyPodName(passive, 0)))
+	if e["ZBX_PROXYMODE"].Value != "1" || e["ZBX_SERVER_HOST"].Value != "0.0.0.0/0,::/0" {
+		t.Errorf("passive proxy env %v", e)
+	}
+	if got := ProxyAddress(in.System, passive, 0); got != "edge-0.edge.ns.svc" {
+		t.Errorf("address %q", got)
+	}
+	passive.Env = []corev1.EnvVar{{Name: "ZBX_HOSTNAME", Value: "x"}, {Name: "ZBX_PROXYOFFLINEBUFFER", Value: "24"}}
+	e = env(ProxyPod(in, passive, "edge-0"))
+	if e["ZBX_HOSTNAME"].Value != "edge-0" || e["ZBX_PROXYOFFLINEBUFFER"].Value != "24" {
+		t.Error("proxy host name must be protected; tuning must pass through")
+	}
+}
+
+func TestProxyServices(t *testing.T) {
+	in := fixture()
+	in.System.Spec.Proxies = []zabbixv1alpha1.ProxySpec{
+		{Name: "dc1"},
+		{Name: "edge", Service: zabbixv1alpha1.ServiceSettings{Type: corev1.ServiceTypeLoadBalancer}},
+		{Name: "off", Enabled: ptr.To(false)},
+	}
+	services := Services(in.System)
+	names := make([]string, 0, len(services))
+	for _, s := range services {
+		names = append(names, ServiceObjectName(in.System, s))
+		if s.Name == "dc1" {
+			svc := &corev1.Service{}
+			ApplyService(in.System, s, svc)
+			if svc.Spec.ClusterIP != corev1.ClusterIPNone || !svc.Spec.PublishNotReadyAddresses || svc.Spec.Selector["zabbix.io/component"] != "proxy-dc1" {
+				t.Errorf("headless proxy Service %+v", svc.Spec)
+			}
+		}
+	}
+	if got := strings.Join(names, ","); got != "zabbix-server,zabbix-web,zabbix-webservice,dc1,edge,edge-external" {
+		t.Errorf("services %s", got)
+	}
+}
+
+func TestAgentDaemonSet(t *testing.T) {
+	in := fixture()
+	in.System.Spec.Agent = zabbixv1alpha1.AgentSpec{Enabled: true, PodSettings: zabbixv1alpha1.PodSettings{
+		Image:       "zabbix/zabbix-agent2:ubuntu-7.0.25",
+		Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+		Env:         []corev1.EnvVar{{Name: "ZBX_SERVER_HOST", Value: "x"}, {Name: "ZBX_TIMEOUT", Value: "10"}},
+	}}
+	ds := &appsv1.DaemonSet{}
+	ApplyAgent(in.System, ds, "h1")
+	spec := ds.Spec.Template.Spec
+	if !spec.HostNetwork || !spec.HostPID || spec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
+		t.Error("the agent must run in the node's network and process namespaces and resolve cluster DNS")
+	}
+	if len(spec.Tolerations) != 1 || spec.Containers[0].Image != "zabbix/zabbix-agent2:ubuntu-7.0.25" {
+		t.Error("agent settings not applied")
+	}
+	e := map[string]corev1.EnvVar{}
+	for _, v := range spec.Containers[0].Env {
+		e[v.Name] = v
+	}
+	if e["ZBX_HOSTNAME"].ValueFrom == nil || e["ZBX_HOSTNAME"].ValueFrom.FieldRef.FieldPath != "spec.nodeName" ||
+		e["ZBX_SERVER_HOST"].Value != "zabbix-server" || e["ZBX_TIMEOUT"].Value != "10" {
+		t.Errorf("agent env %v", e)
+	}
+	if ds.Spec.Selector.MatchLabels["zabbix.io/component"] != Agent || ds.Spec.Template.Annotations[AnnotationConfigHash] != "h1" {
+		t.Errorf("selector %v annotations %v", ds.Spec.Selector, ds.Spec.Template.Annotations)
 	}
 }

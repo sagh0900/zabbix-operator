@@ -105,14 +105,14 @@ func WebPod(in Input, name string) *corev1.Pod {
 		serverPort = TrapperPort
 	}
 	env := append(databaseEnv(db),
-		corev1.EnvVar{Name: "ZBX_SERVER_HOST", Value: ServiceName(sys, Server)},
-		corev1.EnvVar{Name: "ZBX_SERVER_PORT", Value: fmt.Sprint(serverPort)})
+		corev1.EnvVar{Name: envServerHost, Value: ServiceName(sys, Server)},
+		corev1.EnvVar{Name: envServerPort, Value: fmt.Sprint(serverPort)})
 	if sys.Spec.Timezone != "" {
 		env = append(env, corev1.EnvVar{Name: "PHP_TZ", Value: sys.Spec.Timezone}, corev1.EnvVar{Name: "TZ", Value: sys.Spec.Timezone})
 	}
 	vols, mounts := tlsVolumes(db)
 	if tls := db.Spec.TLS; tls != nil {
-		env = append(env, corev1.EnvVar{Name: "ZBX_DB_ENCRYPTION", Value: "true"})
+		env = append(env, corev1.EnvVar{Name: "ZBX_DB_ENCRYPTION", Value: envTrue})
 		if tls.CASecretRef != nil {
 			env = append(env, corev1.EnvVar{Name: "ZBX_DB_CA_FILE", Value: caFile})
 		}
@@ -122,7 +122,7 @@ func WebPod(in Input, name string) *corev1.Pod {
 				corev1.EnvVar{Name: "ZBX_DB_KEY_FILE", Value: clientKey})
 		}
 		if tls.Mode == "verify-full" {
-			env = append(env, corev1.EnvVar{Name: "ZBX_DB_VERIFY_HOST", Value: "true"})
+			env = append(env, corev1.EnvVar{Name: "ZBX_DB_VERIFY_HOST", Value: envTrue})
 		}
 	}
 	probe := func(period, failures int32) *corev1.Probe {
@@ -151,7 +151,7 @@ func WebPod(in Input, name string) *corev1.Pod {
 // database; it renders reports by calling the frontend.
 func WebServicePod(in Input, name string) *corev1.Pod {
 	sys := in.System
-	env := []corev1.EnvVar{{Name: "ZBX_ALLOWEDIP", Value: "0.0.0.0/0,::/0"}}
+	env := []corev1.EnvVar{{Name: "ZBX_ALLOWEDIP", Value: anyAddress}}
 	if sys.Spec.Timezone != "" {
 		env = append(env, corev1.EnvVar{Name: "TZ", Value: sys.Spec.Timezone})
 	}

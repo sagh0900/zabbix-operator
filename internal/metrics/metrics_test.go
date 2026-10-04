@@ -113,6 +113,11 @@ func TestSystemHelpers(t *testing.T) {
 	if n := testutil.CollectAndCount(UpgradeBlocked); n != 0 {
 		t.Errorf("%d blocked series after clearing", n)
 	}
+	AgentNodesReady.WithLabelValues("ns", "zabbix").Set(2)
+	DeleteAgent("ns", "zabbix")
+	if n := testutil.CollectAndCount(AgentNodesReady); n != 0 {
+		t.Errorf("%d agent series after DeleteAgent", n)
+	}
 	ServerActiveNodes.WithLabelValues("ns", "zabbix").Set(1)
 	DeleteSystem("ns", "zabbix")
 	for _, c := range systemCollectors {

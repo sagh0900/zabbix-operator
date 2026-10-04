@@ -298,3 +298,23 @@ tests:
       - eval_time: 19m
         alertname: ZabbixSystemRunning
         exp_alerts: []
+
+  - name: agent nodes missing
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_agent_nodes_ready{namespace="zabbix",system="zabbix"}'
+        values: '5x3 4x20'
+      - series: 'zabbix_operator_agent_nodes_desired{namespace="zabbix",system="zabbix"}'
+        values: '5x23'
+    alert_rule_test:
+      - eval_time: 17m
+        alertname: ZabbixAgentNodesMissing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ZabbixAgentNodesMissing
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: zabbix, system: zabbix }
+            exp_annotations:
+              summary: Zabbix agents missing on some nodes
+              description: The agent of zabbix/zabbix has been ready on fewer nodes than desired for 15 minutes.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixagentnodesmissing

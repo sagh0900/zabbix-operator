@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
@@ -239,7 +240,17 @@ func setActive(ns, name string) {
 // runAll marks every pod running and Ready (process healthy), with server-0 active.
 func runAll(t *testing.T, ns string) {
 	t.Helper()
-	for _, n := range []string{"zabbix-server-0", "zabbix-server-1", "zabbix-web-0", "zabbix-webservice-0"} {
+	names := []string{"zabbix-server-0", "zabbix-server-1", "zabbix-web-0", "zabbix-webservice-0"}
+	pods := &corev1.PodList{}
+	if err := k8s.List(context.Background(), pods, client.InNamespace(ns)); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pods.Items {
+		if strings.HasPrefix(p.Labels[podset.LabelComponent], system.ProxyComponentPrefix) {
+			names = append(names, p.Name)
+		}
+	}
+	for _, n := range names {
 		setPod(t, ns, n)
 	}
 	setActive(ns, "zabbix-server-0")
@@ -253,6 +264,14 @@ func installed(t *testing.T, ns, version string, mutate func(*zabbixv1alpha1.Zab
 	waitPod(t, ns, "zabbix-server-1", true)
 	waitPod(t, ns, "zabbix-web-0", true)
 	waitPod(t, ns, "zabbix-webservice-0", true)
+	// Every proxy pod the spec implies must exist before the kubelet is played for it.
+	sys := getSystem(t, ns)
+	for i := range sys.Spec.Proxies {
+		p := &sys.Spec.Proxies[i]
+		for j := 0; p.IsEnabled() && j < int(max(p.Replicas, 1)); j++ {
+			waitPod(t, ns, system.ProxyPodName(p, j), true)
+		}
+	}
 	runAll(t, ns)
 	waitPhase(t, ns, zabbixv1alpha1.PhaseRunning, "zabbix-server-0 active, 1 standby")
 }
@@ -1088,4 +1107,145 @@ func TestSystem_JobResultIgnoresPredecessorPods(t *testing.T) {
 	if getPod(t, ns, "zabbix-server-init-0") != nil {
 		t.Fatal("the stale result of an earlier Job was used")
 	}
+}
+
+func TestSystem_Proxies(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	ctx := context.Background()
+	installed(t, ns, "7.0.25", func(s *zabbixv1alpha1.ZabbixSystem) {
+		s.Spec.Proxies = []zabbixv1alpha1.ProxySpec{
+			{Name: "dc1", Mode: zabbixv1alpha1.ProxyActive, Replicas: 2},
+			{Name: "edge", Mode: zabbixv1alpha1.ProxyPassive, Replicas: 1},
+		}
+	})
+	for _, n := range []string{"dc1-0", "dc1-1", "edge-0"} {
+		p := waitPod(t, ns, n, true)
+		if v, _ := envValue(p, "zabbix-proxy", "ZBX_HOSTNAME"); v != n {
+			t.Errorf("%s hostname %q", n, v)
+		}
+		setPod(t, ns, n)
+	}
+	for _, name := range []string{"dc1", "edge"} {
+		svc := &corev1.Service{}
+		if err := k8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, svc); err != nil {
+			t.Fatalf("proxy Service %s: %v", name, err)
+		}
+		if svc.Spec.ClusterIP != corev1.ClusterIPNone {
+			t.Errorf("proxy Service %s is not headless", name)
+		}
+	}
+	if err := k8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: "zabbix-proxy-dc1"}, &policyv1.PodDisruptionBudget{}); err != nil {
+		t.Errorf("proxy PodDisruptionBudget: %v", err)
+	}
+	eventually(t, func() error {
+		for _, c := range getSystem(t, ns).Status.Components {
+			if c.Name == "proxy/dc1" && c.Desired == 2 && c.Ready == 2 {
+				return nil
+			}
+		}
+		return fmt.Errorf("proxy/dc1 not reported ready: %+v", getSystem(t, ns).Status.Components)
+	})
+
+	// Disabling one proxy and deleting the other removes their pods and Services.
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+		s.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "dc1", Mode: zabbixv1alpha1.ProxyActive, Replicas: 2, Enabled: ptr.To(false)}}
+	})
+	for _, n := range []string{"dc1-0", "dc1-1", "edge-0"} {
+		waitPod(t, ns, n, false)
+	}
+	eventually(t, func() error {
+		for _, name := range []string{"dc1", "edge"} {
+			if err := k8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &corev1.Service{}); !apierrors.IsNotFound(err) {
+				return fmt.Errorf("Service %s still present: %v", name, err)
+			}
+		}
+		return nil
+	})
+}
+
+// Proxies move after the servers in a patch upgrade, like the frontend.
+func TestSystem_ProxiesFollowServersInUpgrades(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.1", func(s *zabbixv1alpha1.ZabbixSystem) {
+		s.Spec.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "dc1", Replicas: 1}}
+	})
+	setPod(t, ns, "dc1-0")
+	s1 := uid(t, ns, "zabbix-server-1")
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Version = "7.0.25" })
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SameSchema)})
+	waitReplaced(t, ns, "zabbix-server-1", s1)
+	if image(getPod(t, ns, "dc1-0")) != "zabbix/zabbix-proxy-sqlite3:ubuntu-7.0.1" {
+		t.Error("the proxy moved before the servers")
+	}
+}
+
+func TestSystem_AgentDaemonSet(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	ctx := context.Background()
+	installed(t, ns, "7.0.25", func(s *zabbixv1alpha1.ZabbixSystem) {
+		s.Spec.Agent = zabbixv1alpha1.AgentSpec{Enabled: true, PodSettings: zabbixv1alpha1.PodSettings{Image: "zabbix/zabbix-agent2:ubuntu-7.0.25"}}
+	})
+	ds := &appsv1.DaemonSet{}
+	eventually(t, func() error {
+		return k8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: "zabbix-agent"}, ds)
+	})
+	if ref := metav1.GetControllerOf(ds); ref == nil || ref.Kind != "ZabbixSystem" || !ds.Spec.Template.Spec.HostNetwork {
+		t.Fatalf("DaemonSet %+v", ds.ObjectMeta)
+	}
+	// Play the DaemonSet controller: 3 nodes, 2 ready.
+	ds.Status.DesiredNumberScheduled, ds.Status.NumberReady, ds.Status.CurrentNumberScheduled = 3, 2, 3
+	if err := k8s.Status().Update(ctx, ds); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() error {
+		for _, c := range getSystem(t, ns).Status.Components {
+			if c.Name == "agent" && c.Desired == 3 && c.Ready == 2 {
+				if getSystem(t, ns).Status.Phase != zabbixv1alpha1.PhaseRunning {
+					return fmt.Errorf("agent coverage must not change the phase")
+				}
+				if testutil.ToFloat64(metrics.AgentNodesReady.WithLabelValues(ns, "zabbix")) != 2 {
+					return fmt.Errorf("agent metric")
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("agent component %+v", getSystem(t, ns).Status.Components)
+	})
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Agent.Enabled = false })
+	eventually(t, func() error {
+		if err := k8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: "zabbix-agent"}, &appsv1.DaemonSet{}); !apierrors.IsNotFound(err) {
+			return fmt.Errorf("DaemonSet still present: %v", err)
+		}
+		return nil
+	})
+}
+
+func TestSystem_AgentDaemonSetConflict(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	foreign := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "zabbix-agent", Namespace: ns},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "other"}},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "other"}},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "x", Image: "busybox"}}}},
+		},
+	}
+	if err := k8s.Create(context.Background(), foreign); err != nil {
+		t.Fatal(err)
+	}
+	installedUntilConflict := func() {
+		readyDatabase(t, ns)
+		createSystem(t, ns, "7.0.25", func(s *zabbixv1alpha1.ZabbixSystem) {
+			s.Spec.Agent = zabbixv1alpha1.AgentSpec{Enabled: true, PodSettings: zabbixv1alpha1.PodSettings{Image: "zabbix/zabbix-agent2:ubuntu-7.0.25"}}
+		})
+		finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SameSchema)})
+		waitPod(t, ns, "zabbix-server-1", true)
+		runAll(t, ns)
+	}
+	installedUntilConflict()
+	waitPhase(t, ns, zabbixv1alpha1.PhaseDegraded, "Conflict: DaemonSet zabbix-agent exists and is not managed by this ZabbixSystem")
 }
