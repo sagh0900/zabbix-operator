@@ -1,0 +1,37 @@
+name: e2e
+
+# The end-to-end suite runs on a kind cluster: on demand and weekly, not on every pull request.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install kind
+        run: |
+          curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          chmod +x /usr/local/bin/kind
+      - name: End-to-end suite
+        run: make test-e2e
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          k="kubectl --kubeconfig bin/e2e-kubeconfig"
+          $k get pods -A -o wide || true
+          $k get zabbixsystems,zabbixdatabases -A -o yaml || true
+          $k -n zabbix-operator logs deployment/zabbix-operator-controller-manager --tail=300 || true
