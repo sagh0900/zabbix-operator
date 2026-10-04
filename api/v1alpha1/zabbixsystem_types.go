@@ -375,6 +375,10 @@ type ComponentStatus struct {
 	Name    string `json:"name"`
 	Desired int32  `json:"desired"`
 	Ready   int32  `json:"ready"`
+	// Message says why a pod is not ready when Kubernetes reports a reason, for example
+	// that it cannot be scheduled or its image cannot be pulled.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // ZabbixSystem is a complete Zabbix installation.

@@ -752,13 +752,44 @@ func TestSystem_HANodeGC(t *testing.T) {
 	if got := testutil.ToFloat64(metrics.JobRuns.WithLabelValues(ns, "zabbix", jobs.CommandHAGC, "succeeded")); got != 1 {
 		t.Errorf("job runs metric %v", got)
 	}
+	// A successful run is removed once its result is read, and not run again within the
+	// interval.
+	eventually(t, func() error {
+		list := &batchv1.JobList{}
+		if err := k8s.List(context.Background(), list, client.InNamespace(ns), client.MatchingLabels{jobs.LabelJob: jobs.CommandHAGC}); err != nil {
+			return err
+		}
+		if len(list.Items) != 0 {
+			j := list.Items[0]
+			return fmt.Errorf("%d ha-gc Jobs left, want 0 (uid %s deleting=%v finalizers=%v conditions=%d)", len(list.Items), j.UID, j.DeletionTimestamp, j.Finalizers, len(j.Status.Conditions))
+		}
+		return nil
+	})
 	time.Sleep(3 * activeCheckInterval)
 	list := &batchv1.JobList{}
 	if err := k8s.List(context.Background(), list, client.InNamespace(ns), client.MatchingLabels{jobs.LabelJob: jobs.CommandHAGC}); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Items) != 1 {
-		t.Errorf("%d ha-gc Jobs, want 1 within the interval", len(list.Items))
+	if len(list.Items) != 0 {
+		t.Errorf("%d ha-gc Jobs within the interval, want none", len(list.Items))
+	}
+}
+
+// A failed ha-gc run stays for inspection, is reported once, and is not retried within
+// the interval.
+func TestSystem_HANodeGCFailureIsKept(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.25", nil)
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandHAGC, Reason: "DatabaseError", Message: "connection refused"})
+	waitEvent(t, ns, corev1.EventTypeWarning, "HANodeGCFailed", "connection refused")
+	time.Sleep(3 * activeCheckInterval)
+	list := &batchv1.JobList{}
+	if err := k8s.List(context.Background(), list, client.InNamespace(ns), client.MatchingLabels{jobs.LabelJob: jobs.CommandHAGC}); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || len(list.Items[0].Status.Conditions) == 0 {
+		t.Errorf("want the finished, failed ha-gc Job kept and no new run; got %d Jobs", len(list.Items))
 	}
 }
 

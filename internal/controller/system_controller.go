@@ -172,6 +172,9 @@ func (r *SystemReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.explainComponents(ctx, sys, obs); err != nil {
+		return ctrl.Result{}, err
+	}
 	r.recordMetrics(sys, obs)
 	if err := r.updateStatus(ctx, sys, obs); err != nil {
 		if apierrors.IsConflict(err) {
@@ -505,10 +508,16 @@ func (r *SystemReconciler) podsetReconcile(ctx context.Context, sys *zabbixv1alp
 func (r *SystemReconciler) collectHANodes(ctx context.Context, sys *zabbixv1alpha1.ZabbixSystem,
 	db *zabbixv1alpha1.ZabbixDatabase, obs *observation) error {
 	now := r.now()
-	if last := sys.Status.LastHANodeGCTime; last != nil && now.Sub(last.Time) < haNodeGCInterval {
-		return nil
+	if last := sys.Status.LastHANodeGCTime; last != nil {
+		if err := r.pruneHAGCJobs(ctx, sys, last.Time); err != nil {
+			return err
+		}
+		if now.Sub(last.Time) < haNodeGCInterval {
+			return nil
+		}
 	}
-	res, err := r.runJob(ctx, jobs.Spec{
+	// A failed run is kept for inspection; the next interval's run is a new Job.
+	res, first, err := r.runJobWith(ctx, jobs.Spec{
 		Owner: sys, System: sys.Name, Command: jobs.CommandHAGC,
 		Args: []string{
 			"--keep=" + strings.Join(obs.serverPods, ","),
@@ -516,12 +525,14 @@ func (r *SystemReconciler) collectHANodes(ctx context.Context, sys *zabbixv1alph
 		},
 		Image: r.OperatorImage, Database: db, Host: db.DirectHostOrDefault(),
 		RunID: fmt.Sprint(now.Unix() / int64(haNodeGCInterval/time.Second)),
-	})
+	}, keepFinished)
 	if err != nil || res == nil {
 		return err
 	}
 	if !res.OK {
-		r.event(sys, corev1.EventTypeWarning, "HANodeGCFailed", res.Message)
+		if first {
+			r.event(sys, corev1.EventTypeWarning, "HANodeGCFailed", res.Message)
+		}
 		return nil
 	}
 	t := metav1.NewTime(now)
@@ -529,6 +540,29 @@ func (r *SystemReconciler) collectHANodes(ctx context.Context, sys *zabbixv1alph
 	metrics.HANodeGCRowsDeleted.WithLabelValues(sys.Namespace, sys.Name).Add(float64(res.Deleted))
 	if res.Deleted > 0 {
 		r.event(sys, corev1.EventTypeNormal, "HANodesRemoved", res.Message)
+	}
+	return nil
+}
+
+// pruneHAGCJobs deletes the successful ha-gc Jobs, and their pods, whose result the status
+// already records (completed no later than recorded). Waiting for the recorded time, rather
+// than deleting right after reading the result, keeps a pass that still sees the previous
+// status from running ha-gc again. Failed runs stay until their TTL.
+func (r *SystemReconciler) pruneHAGCJobs(ctx context.Context, sys *zabbixv1alpha1.ZabbixSystem, recorded time.Time) error {
+	list := &batchv1.JobList{}
+	if err := r.List(ctx, list, client.InNamespace(sys.Namespace), client.MatchingLabels{jobs.LabelJob: jobs.CommandHAGC}); err != nil {
+		return err
+	}
+	for i := range list.Items {
+		job := &list.Items[i]
+		if ref := metav1.GetControllerOf(job); ref == nil || ref.UID != sys.UID || job.DeletionTimestamp != nil {
+			continue
+		}
+		if finished, failed, at := jobFinished(job); finished && !failed && !at.After(recorded) {
+			if err := r.Delete(ctx, job, client.PropagationPolicy("Background")); client.IgnoreNotFound(err) != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

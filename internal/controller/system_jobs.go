@@ -36,9 +36,29 @@ import (
 // so a blocked precheck is re-evaluated after the cause is fixed.
 const retryFailedJobAfter = time.Minute
 
+// jobCleanup says what happens to a finished Job.
+type jobCleanup int
+
+const (
+	// retryFailed keeps a successful Job (its result answers repeated questions) and
+	// deletes a failed one after retryFailedJobAfter, so the next pass runs it again.
+	retryFailed jobCleanup = iota
+	// keepFinished never deletes a finished Job: a failed one stays, with its pods, for
+	// inspection until its TTL. For periodic Jobs whose next run is a new Job anyway; their
+	// successful runs are removed by the caller once the result is recorded.
+	keepFinished
+)
+
 // runJob makes sure the Job for spec exists and returns its result once it has finished;
-// nil means it is still running.
+// nil means it is still running. Finished Jobs are cleaned up with retryFailed.
 func (r *SystemReconciler) runJob(ctx context.Context, spec jobs.Spec) (*jobs.Result, error) {
+	res, _, err := r.runJobWith(ctx, spec, retryFailed)
+	return res, err
+}
+
+// runJobWith is runJob with a cleanup policy. first is true the first time a result of
+// this Job is returned.
+func (r *SystemReconciler) runJobWith(ctx context.Context, spec jobs.Spec, cleanup jobCleanup) (res *jobs.Result, first bool, err error) {
 	// Jobs run the operator image; they pull it with the server's pull secrets, which
 	// cover the usual case of one private registry or mirror for every image.
 	if sys, ok := spec.Owner.(*zabbixv1alpha1.ZabbixSystem); ok && spec.ImagePullSecrets == nil {
@@ -46,30 +66,30 @@ func (r *SystemReconciler) runJob(ctx context.Context, spec jobs.Spec) (*jobs.Re
 	}
 	want, err := jobs.Build(spec, r.Scheme)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	job := &batchv1.Job{}
 	err = r.Get(ctx, client.ObjectKeyFromObject(want), job)
 	switch {
 	case apierrors.IsNotFound(err):
-		return nil, client.IgnoreAlreadyExists(r.Create(ctx, want))
+		return nil, false, client.IgnoreAlreadyExists(r.Create(ctx, want))
 	case err != nil:
-		return nil, err
+		return nil, false, err
 	}
 
 	finished, failed, at := jobFinished(job)
 	if !finished {
-		return nil, nil
+		return nil, false, nil
 	}
-	res, err := r.jobResult(ctx, job)
-	if err != nil {
-		return nil, err
+	if res, err = r.jobResult(ctx, job); err != nil {
+		return nil, false, err
 	}
 	if failed && res == nil {
 		res = &jobs.Result{Command: spec.Command, Reason: "JobFailed", Message: "the " + spec.Command + " Job failed without a result"}
 	}
 	if res != nil {
 		if _, counted := r.countedJobs.LoadOrStore(job.UID, true); !counted {
+			first = true
 			result := "succeeded"
 			if !res.OK {
 				result = "failed"
@@ -77,12 +97,25 @@ func (r *SystemReconciler) runJob(ctx context.Context, spec jobs.Spec) (*jobs.Re
 			metrics.JobRuns.WithLabelValues(spec.Owner.GetNamespace(), spec.System, spec.Command, result).Inc()
 		}
 	}
-	if res != nil && !res.OK && r.now().Sub(at) > retryFailedJobAfter {
+	if removeFinishedJob(cleanup, res, r.now().Sub(at)) {
 		if err := r.Delete(ctx, job, client.PropagationPolicy("Background")); client.IgnoreNotFound(err) != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
-	return res, nil
+	return res, first, nil
+}
+
+// removeFinishedJob decides whether a finished Job with result res, finished age ago, is
+// deleted under the cleanup policy.
+func removeFinishedJob(cleanup jobCleanup, res *jobs.Result, age time.Duration) bool {
+	switch {
+	case res == nil:
+		return false
+	case cleanup == keepFinished:
+		return false
+	default:
+		return !res.OK && age > retryFailedJobAfter
+	}
 }
 
 // deleteJob removes the Job for spec, so the next runJob starts it again.
