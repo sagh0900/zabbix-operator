@@ -12,6 +12,9 @@ spec:
       scheme: https
       path: /metrics
       interval: 30s
+      # Series carry the namespace of the ZabbixSystem or ZabbixDatabase they describe;
+      # without this, Prometheus replaces it with the operator pod's namespace.
+      honorLabels: true
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
         # The operator serves a self-signed certificate.
