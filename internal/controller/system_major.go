@@ -143,6 +143,11 @@ func (r *SystemReconciler) majorStep(ctx context.Context, sys *zabbixv1alpha1.Za
 		}
 	}
 
+	// Proxies of the previous version keep sending data while the servers are down.
+	if _, err := r.reconcileProxies(ctx, sys, db, from, hold, obs); err != nil {
+		return 0, err
+	}
+
 	if hold != "" {
 		// Nothing advances while the database is unavailable; a running schema upgrade is
 		// left alone.

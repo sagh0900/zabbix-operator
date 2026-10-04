@@ -92,6 +92,15 @@ spec:
             summary: Zabbix component has fewer ready pods than desired
             description: Component {{ $labels.component }} of {{ $labels.namespace }}/{{ $labels.system }} has had fewer ready pods than desired for 10 minutes.
             runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixcomponentdegraded
+        - alert: ZabbixAgentNodesMissing
+          expr: zabbix_operator_agent_nodes_ready < zabbix_operator_agent_nodes_desired
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix agents missing on some nodes
+            description: The agent of {{ $labels.namespace }}/{{ $labels.system }} has been ready on fewer nodes than desired for 15 minutes.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixagentnodesmissing
         - alert: ZabbixPodReplacementsHigh
           expr: increase(zabbix_operator_pod_replacements_total{reason="failed"}[30m]) > 5
           labels:

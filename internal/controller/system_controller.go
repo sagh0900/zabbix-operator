@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -400,6 +401,13 @@ func (r *SystemReconciler) converge(ctx context.Context, sys *zabbixv1alpha1.Zab
 		obs.add(system.WebService, wsSt)
 	}
 
+	proxyAction, err := r.reconcileProxies(ctx, sys, db, otherVersion, hold, obs)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := r.reconcileAgent(ctx, sys, obs); err != nil {
+		return 0, false, err
+	}
 	conflicts, err := r.reconcileNetwork(ctx, sys)
 	if err != nil {
 		return 0, false, err
@@ -421,6 +429,8 @@ func (r *SystemReconciler) converge(ctx context.Context, sys *zabbixv1alpha1.Zab
 		obs.phase, obs.reason = zabbixv1alpha1.PhaseDegraded, "Web: "+webSt.Action
 	case wsSt.Action != "":
 		obs.phase, obs.reason = zabbixv1alpha1.PhaseDegraded, "Web service: "+wsSt.Action
+	case proxyAction != "":
+		obs.phase, obs.reason = zabbixv1alpha1.PhaseDegraded, proxyAction
 	default:
 		obs.reason = fmt.Sprintf("%s active, %d standby", obs.active.Name, int(sys.Spec.ServerReplicas())-1)
 	}
@@ -558,7 +568,7 @@ func (r *SystemReconciler) precheck(ctx context.Context, sys *zabbixv1alpha1.Zab
 // ConfigMap so a change to them rolls the pods.
 func (r *SystemReconciler) input(ctx context.Context, sys *zabbixv1alpha1.ZabbixSystem, db *zabbixv1alpha1.ZabbixDatabase,
 	version string, settings *zabbixv1alpha1.PodSettings, usesDB bool) system.Input {
-	secrets, configMaps := system.ReferencedObjects(db, settings, usesDB)
+	secrets, configMaps := system.ReferencedObjects(db, settings, usesDB && db != nil)
 	h := sha256.New()
 	for _, ref := range []struct {
 		kind  string
@@ -586,7 +596,7 @@ func (r *SystemReconciler) reconcileNetwork(ctx context.Context, sys *zabbixv1al
 	var conflicts []string
 	wantSvc := map[string]bool{}
 	for _, s := range system.Services(sys) {
-		svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: sys.Namespace, Name: system.ServiceName(sys, s.Component)}}
+		svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: sys.Namespace, Name: system.ServiceObjectName(sys, s)}}
 		wantSvc[svc.Name] = true
 		ok, err := r.applyOwned(ctx, sys, svc, func() { system.ApplyService(sys, s, svc) })
 		if err != nil {
@@ -773,6 +783,7 @@ func (r *SystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&networkingv1.Ingress{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&batchv1.Job{}).
+		Owns(&appsv1.DaemonSet{}).
 		Watches(&zabbixv1alpha1.ZabbixDatabase{}, handler.EnqueueRequestsFromMapFunc(r.systemsBy(indexSystemDatabase, ""))).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.systemsForSecret), builder.OnlyMetadata).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.systemsBy(indexSystemRefs, "ConfigMap/")), builder.OnlyMetadata).
@@ -792,7 +803,13 @@ func (r *SystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func referencedKeys(o client.Object) []string {
 	sys := o.(*zabbixv1alpha1.ZabbixSystem)
 	var keys []string
-	for _, s := range []*zabbixv1alpha1.PodSettings{&sys.Spec.Server.PodSettings, &sys.Spec.Web.PodSettings, &sys.Spec.WebService.PodSettings} {
+	settings := make([]*zabbixv1alpha1.PodSettings, 0, 4+len(sys.Spec.Proxies))
+	settings = append(settings, &sys.Spec.Server.PodSettings, &sys.Spec.Web.PodSettings,
+		&sys.Spec.WebService.PodSettings, &sys.Spec.Agent.PodSettings)
+	for i := range sys.Spec.Proxies {
+		settings = append(settings, &sys.Spec.Proxies[i].PodSettings)
+	}
+	for _, s := range settings {
 		secrets, cms := system.ReferencedObjects(&zabbixv1alpha1.ZabbixDatabase{}, s, false)
 		for _, n := range secrets {
 			keys = append(keys, "Secret/"+n)

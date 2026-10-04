@@ -37,21 +37,49 @@ const (
 
 // ServiceSpec describes the Service of a component.
 type ServiceSpec struct {
+	// Name of the Service; empty means ServiceName(system, Component).
+	Name       string
 	Component  string
 	PortName   string
 	Port       int32 // default Service port
 	TargetPort string
 	Settings   zabbixv1alpha1.ServiceSettings
+	// Headless gives every pod its own DNS name instead of one virtual IP.
+	Headless bool
+}
+
+// ServiceObjectName returns the name of the Service described by s.
+func ServiceObjectName(sys *zabbixv1alpha1.ZabbixSystem, s ServiceSpec) string {
+	if s.Name != "" {
+		return s.Name
+	}
+	return ServiceName(sys, s.Component)
 }
 
 // Services returns the Services the system needs.
 func Services(sys *zabbixv1alpha1.ZabbixSystem) []ServiceSpec {
-	out := []ServiceSpec{{Server, portTrapper, TrapperPort, portTrapper, sys.Spec.Server.Service}}
+	out := []ServiceSpec{{Component: Server, PortName: portTrapper, Port: TrapperPort, TargetPort: portTrapper,
+		Settings: sys.Spec.Server.Service}}
 	if sys.Spec.Web.IsEnabled() {
-		out = append(out, ServiceSpec{Web, portHTTP, 80, portHTTP, sys.Spec.Web.Service})
+		out = append(out, ServiceSpec{Component: Web, PortName: portHTTP, Port: 80, TargetPort: portHTTP, Settings: sys.Spec.Web.Service})
 	}
 	if sys.Spec.WebService.IsEnabled() {
-		out = append(out, ServiceSpec{WebService, portReport, WebServicePort, portReport, sys.Spec.WebService.Service})
+		out = append(out, ServiceSpec{Component: WebService, PortName: portReport, Port: WebServicePort, TargetPort: portReport,
+			Settings: sys.Spec.WebService.Service})
+	}
+	for i := range sys.Spec.Proxies {
+		p := &sys.Spec.Proxies[i]
+		if !p.IsEnabled() {
+			continue
+		}
+		// A headless Service gives every proxy instance a stable DNS name; a LoadBalancer or
+		// NodePort setting adds a second Service for clients outside the cluster.
+		out = append(out, ServiceSpec{Name: p.Name, Component: ProxyComponent(p), PortName: portTrapper, Port: TrapperPort,
+			TargetPort: portTrapper, Headless: true})
+		if t := p.Service.Type; t == corev1.ServiceTypeLoadBalancer || t == corev1.ServiceTypeNodePort {
+			out = append(out, ServiceSpec{Name: p.Name + "-external", Component: ProxyComponent(p), PortName: portTrapper,
+				Port: TrapperPort, TargetPort: portTrapper, Settings: p.Service})
+		}
 	}
 	return out
 }
@@ -68,8 +96,13 @@ func ApplyService(sys *zabbixv1alpha1.ZabbixSystem, s ServiceSpec, svc *corev1.S
 		svc.Spec.Selector[LabelRole] = RoleActive
 	}
 	svc.Spec.Type = set.Type
-	if svc.Spec.Type == "" {
+	if svc.Spec.Type == "" || s.Headless {
 		svc.Spec.Type = corev1.ServiceTypeClusterIP
+	}
+	if s.Headless {
+		svc.Spec.ClusterIP = corev1.ClusterIPNone
+		// Proxies must be resolvable while they start, before they are Ready.
+		svc.Spec.PublishNotReadyAddresses = true
 	}
 	port := set.Port
 	if port == 0 {

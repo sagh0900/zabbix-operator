@@ -321,17 +321,33 @@ needed.
 
 ### Proxies
 
-Each proxy entry produces `replicas` Pods using the `zabbix-proxy-sqlite3` image with an
-`emptyDir` database, so proxies are stateless. Instance `i` uses hostname `<name>-<i>`.
-Active proxies send to the `<system>-server` Service; passive proxies get a Service each.
-Registering proxies and proxy groups in Zabbix is done by the user.
+Each proxy entry produces `replicas` Pods named `<name>-<i>`, which is also each instance's
+Zabbix host name, using the `zabbix-proxy-sqlite3` image of the frontend's version, so
+proxies move after the servers during upgrades. The SQLite database lives in an `emptyDir`:
+proxies are stateless, and data an instance buffered is lost when its Pod is replaced.
+
+- Active proxies (`mode: active`) send to the role-selected `<system>-server` Service.
+- Passive proxies (`mode: passive`) accept the server's connections; since server Pod IPs
+  change, the allowed list is open and access is limited by how the proxy is exposed.
+- Every proxy gets a headless Service `<name>`, so each instance has a stable DNS name
+  `<name>-<i>.<name>.<namespace>.svc` (the address of a passive proxy in Zabbix). With
+  `service.type` `LoadBalancer` or `NodePort`, a second Service `<name>-external` exposes
+  the instances outside the cluster, for example for agents.
+- Like the server, proxy containers keep their capabilities by default, because ICMP pingers
+  need raw sockets.
+- Registering proxies and proxy groups in Zabbix is done by the user, or by the operator with
+  [proxy registration](#proxy-registration).
 
 ### Agents
 
-When `agent.enabled` is true, a DaemonSet runs agent2 on every node matching the agent's
-placement settings, with the node name as hostname and the `<system>-server` Service as
-server address. The agent image is set explicitly because agents are versioned
-independently of the server.
+When `agent.enabled` is true, a DaemonSet `<system>-agent` runs agent 2 on every node
+matching the agent's placement settings. It runs in the node's network and process
+namespaces, so it monitors the node itself, and needs a namespace that allows this (Pod
+Security `privileged`). It uses the node name as host name, sends active checks to the
+`<system>-server` Service and accepts passive checks from the server Pods. The agent image is
+set explicitly because agents are versioned independently of the server. Agent coverage is
+reported in the status and metrics, and by `ZabbixAgentNodesMissing`, but does not change the
+system's phase.
 
 ### Exposure
 

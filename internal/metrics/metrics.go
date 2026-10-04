@@ -116,6 +116,18 @@ var (
 		Help: "Finished database Jobs, by command and result (succeeded or failed).",
 	}, []string{labelNamespace, labelSystem, "job", "result"})
 
+	// AgentNodesDesired is the number of nodes that should run an agent.
+	AgentNodesDesired = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "agent_nodes_desired",
+		Help: "Nodes that should run a Zabbix agent (only while the agent is enabled).",
+	}, []string{labelNamespace, labelSystem})
+
+	// AgentNodesReady is the number of nodes with a ready agent.
+	AgentNodesReady = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Name: "agent_nodes_ready",
+		Help: "Nodes with a ready Zabbix agent (only while the agent is enabled).",
+	}, []string{labelNamespace, labelSystem})
+
 	// HANodeGCRowsDeleted counts stale ha_node rows removed.
 	HANodeGCRowsDeleted = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace, Name: "hanode_gc_rows_deleted_total",
@@ -136,6 +148,7 @@ var systemCollectors = []interface {
 }{
 	SystemPhase, SystemInfo, ComponentPodsDesired, ComponentPodsReady, PodReplacements, ServerActiveNodes,
 	ServerFailovers, UpgradeInProgress, UpgradeBlocked, JobRuns, HANodeGCRowsDeleted, HANodeGCLastSuccess,
+	AgentNodesDesired, AgentNodesReady,
 }
 
 func init() {
@@ -171,6 +184,13 @@ func SetUpgradeBlocked(ns, name, reason string) {
 	if reason != "" {
 		UpgradeBlocked.WithLabelValues(ns, name, reason).Set(1)
 	}
+}
+
+// DeleteAgent removes the agent series of a system whose agent is disabled.
+func DeleteAgent(ns, name string) {
+	labels := prometheus.Labels{labelNamespace: ns, labelSystem: name}
+	AgentNodesDesired.DeletePartialMatch(labels)
+	AgentNodesReady.DeletePartialMatch(labels)
 }
 
 // DeleteSystem removes every series of a deleted ZabbixSystem.
