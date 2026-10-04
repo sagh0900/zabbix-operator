@@ -175,6 +175,19 @@ func (r *SystemReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 }
 
 func (r *SystemReconciler) reconcileSystem(ctx context.Context, sys *zabbixv1alpha1.ZabbixSystem, obs *observation) (time.Duration, error) {
+	if sys.Spec.Suspend {
+		wait, err := r.suspendWaits(ctx, sys)
+		if err != nil {
+			return 0, err
+		}
+		if wait == "" {
+			return r.suspend(ctx, sys, obs)
+		}
+		defer func() { obs.reason += "; suspend waits for " + wait }()
+	}
+	if sys.Status.Phase == zabbixv1alpha1.PhaseSuspended {
+		r.event(sys, corev1.EventTypeNormal, "Resuming", "Starting all Zabbix pods")
+	}
 	db := &zabbixv1alpha1.ZabbixDatabase{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: sys.Namespace, Name: sys.Spec.DatabaseRef.Name}, db); err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -518,7 +531,7 @@ func (r *SystemReconciler) recordMetrics(sys *zabbixv1alpha1.ZabbixSystem, obs *
 	metrics.SetSystemInfo(ns, name, sys.Spec.Version, obs.running)
 	metrics.SetUpgradeBlocked(ns, name, obs.blocked)
 	upgrading := 0.0
-	if obs.phase == zabbixv1alpha1.PhaseUpgrading || (obs.running != "" && obs.running != sys.Spec.Version) {
+	if obs.phase == zabbixv1alpha1.PhaseUpgrading || (obs.phase != zabbixv1alpha1.PhaseSuspended && obs.running != "" && obs.running != sys.Spec.Version) {
 		upgrading = 1
 	}
 	metrics.UpgradeInProgress.WithLabelValues(ns, name).Set(upgrading)
@@ -711,12 +724,25 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 		st.ActiveServer = nil
 	}
 	switch prev, cur := sys.Status.ActiveServer, st.ActiveServer; {
+	case obs.phase == zabbixv1alpha1.PhaseSuspended:
 	case prev != nil && cur == nil && obs.phase != zabbixv1alpha1.PhaseInstalling:
 		r.event(sys, corev1.EventTypeWarning, "ActiveServerLost", prev.Pod+" is no longer active; no server node is active")
 	case cur != nil && (prev == nil || prev.Pod != cur.Pod):
 		r.event(sys, corev1.EventTypeNormal, "ActiveServer", cur.Pod+" is the active server node")
 	}
 
+	setConditions(sys, &st, obs)
+
+	if equality.Semantic.DeepEqual(st, sys.Status) {
+		return nil
+	}
+	sys.Status = st
+	return r.Status().Update(ctx, sys)
+}
+
+// setConditions sets the status conditions from what the pass observed.
+func setConditions(sys *zabbixv1alpha1.ZabbixSystem, st *zabbixv1alpha1.ZabbixSystemStatus, obs *observation) {
+	gen := sys.Generation
 	set := func(t string, ok bool, reason, msg string) {
 		s := metav1.ConditionFalse
 		if ok {
@@ -729,7 +755,10 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 	} else {
 		set(zabbixv1alpha1.SystemDatabaseReady, false, "DatabaseNotFound", obs.reason)
 	}
+	suspended := obs.phase == zabbixv1alpha1.PhaseSuspended
 	switch {
+	case suspended && obs.activeN == 0:
+		set(zabbixv1alpha1.SystemServerActive, false, "Suspended", "the system is suspended")
 	case obs.activeN == 1:
 		set(zabbixv1alpha1.SystemServerActive, true, "Active", obs.active.Name+" is active")
 	case obs.activeN > 1:
@@ -738,6 +767,8 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 		set(zabbixv1alpha1.SystemServerActive, false, "NoActiveNode", "no server pod is active")
 	}
 	switch {
+	case suspended:
+		set(zabbixv1alpha1.SystemWebReady, false, "Suspended", "the system is suspended")
 	case !obs.webEnabled:
 		set(zabbixv1alpha1.SystemWebReady, true, "Disabled", "the frontend is disabled")
 	case obs.webReady:
@@ -751,7 +782,9 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 		set(zabbixv1alpha1.SystemUpgradeBlocked, false, "NotBlocked", "")
 	}
 	upgrading := obs.phase == zabbixv1alpha1.PhaseUpgrading || (sys.Spec.Version != obs.running && obs.running != "")
-	if upgrading {
+	if suspended {
+		set(zabbixv1alpha1.SystemUpgrading, false, "Suspended", "the system is suspended")
+	} else if upgrading {
 		set(zabbixv1alpha1.SystemUpgrading, true, "Upgrading", fmt.Sprintf("from %s to %s", obs.running, sys.Spec.Version))
 	} else {
 		set(zabbixv1alpha1.SystemUpgrading, false, "UpToDate", "")
@@ -775,12 +808,6 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 			}
 		}
 	}
-
-	if equality.Semantic.DeepEqual(st, sys.Status) {
-		return nil
-	}
-	sys.Status = st
-	return r.Status().Update(ctx, sys)
 }
 
 // SetupWithManager registers the controller, its indexes and watches.

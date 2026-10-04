@@ -44,7 +44,7 @@ const (
 )
 
 // SystemPhase summarises the state of a ZabbixSystem.
-// +kubebuilder:validation:Enum=Installing;Running;Upgrading;Degraded;Blocked
+// +kubebuilder:validation:Enum=Installing;Running;Upgrading;Degraded;Blocked;Suspended
 type SystemPhase string
 
 // Phases of a ZabbixSystem.
@@ -54,6 +54,7 @@ const (
 	PhaseUpgrading  SystemPhase = "Upgrading"
 	PhaseDegraded   SystemPhase = "Degraded"
 	PhaseBlocked    SystemPhase = "Blocked"
+	PhaseSuspended  SystemPhase = "Suspended"
 )
 
 // ZabbixSystemSpec describes one Zabbix installation: server, frontend, web service,
@@ -70,6 +71,13 @@ type ZabbixSystemSpec struct {
 
 	// DatabaseRef names the ZabbixDatabase in the same namespace.
 	DatabaseRef LocalObjectReference `json:"databaseRef"`
+
+	// Suspend stops every Zabbix pod in a safe order and keeps them stopped: frontend and
+	// web service, proxies and agents, standby servers, then the active server. Services,
+	// configuration, status and the database stay. A running schema creation or schema
+	// upgrade finishes first. Setting it back to false resumes.
+	// +optional
+	Suspend bool `json:"suspend,omitempty"`
 
 	// ImageRepository is the registry and path prefix of the official Zabbix images.
 	// +kubebuilder:default=zabbix

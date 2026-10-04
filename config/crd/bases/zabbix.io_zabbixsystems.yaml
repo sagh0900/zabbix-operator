@@ -1702,6 +1702,13 @@ spec:
                       x-kubernetes-preserve-unknown-fields: true
                     type: array
                 type: object
+              suspend:
+                description: |-
+                  Suspend stops every Zabbix pod in a safe order and keeps them stopped: frontend and
+                  web service, proxies and agents, standby servers, then the active server. Services,
+                  configuration, status and the database stay. A running schema creation or schema
+                  upgrade finishes first. Setting it back to false resumes.
+                type: boolean
               timezone:
                 description: Timezone (TZ) of all Zabbix containers, for example Europe/Stockholm.
                 type: string
@@ -3051,6 +3058,7 @@ spec:
                 - Upgrading
                 - Degraded
                 - Blocked
+                - Suspended
                 type: string
               phaseReason:
                 description: |-

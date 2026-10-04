@@ -100,6 +100,7 @@ spec:
   version: "7.0.25"            # Zabbix version for server, web, web service and proxies
   databaseRef:
     name: zabbix-db
+  suspend: false               # true stops every Zabbix pod, see "Suspend"
   imageRepository: zabbix      # registry and path prefix, e.g. a mirror
   imageFlavor: ubuntu          # ubuntu | alpine → <imageRepository>/<component>:<flavor>-<version>
   timezone: Europe/Stockholm
@@ -175,7 +176,8 @@ conditions on the ZabbixSystem.
 Validation rejects, at apply time: a malformed version, changing `databaseRef`, an enabled
 agent without an image, and enabled proxy registration without an API token reference.
 
-Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Blocked`) with a
+Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Blocked`,
+`Suspended`) with a
 one-line `phaseReason`,
 `runningVersion`, `activeServer` (pod name and IP of the active HA node), per-component
 ready counts, `registeredProxies`, and conditions `DatabaseReady`, `ServerActive`, `WebReady`,
@@ -553,19 +555,25 @@ hibernation stops a cluster, for maintenance windows that need Zabbix fully off 
 example, to keep every client away from the database). Like `suspend` on a CronJob, it is
 a spec field, so it can be set from Git.
 
-- Pods stop in a safe order: frontend and web service, proxies, standby servers, then the
-  active server, each shutting down cleanly so its `ha_node` row is marked stopped. The agent
-  DaemonSet stops too.
+- Pods stop in stages, each stage only after the previous one has fully terminated:
+  frontend and web service; proxies and the agent DaemonSet; standby servers; the active
+  server. Each pod gets SIGTERM and its grace period, so a server marks its `ha_node` row
+  stopped, and the active node serves until the very end.
 - Everything else stays: the ZabbixSystem, Services, Ingresses, configuration and status.
-  The database is untouched.
-- No Jobs run (no `precheck`, no `ha-gc`), and nothing is recreated or rolled while suspended.
-- Status: phase `Suspended` with the reason, `ServerActive=False` with reason `Suspended`.
-  The `ZabbixServerNoActiveNode` alert does not fire for a suspended system, and the
-  `ZabbixSystemRunning` heartbeat stops, which is the expected signal.
-- A suspend requested during a schema upgrade waits until the schema step has finished; a
-  running schema upgrade is never interrupted.
+  PodDisruptionBudgets go with their pods. The database is untouched.
+- No Jobs run (no `precheck`, no `ha-gc`), proxy registration pauses, and nothing is
+  recreated or rolled while suspended, even when the spec changes.
+- Status: phase `Suspended`, with the stage being stopped in the reason while it runs;
+  `ServerActive`, `WebReady` and `Upgrading` are False with reason `Suspended`. Events
+  `Suspending`, `Suspended` and `Resuming` mark the transitions. `ZabbixServerNoActiveNode`
+  does not fire for a suspended system, and the `ZabbixSystemRunning` heartbeat stops,
+  which is the expected signal.
+- A suspend requested while the schema is being created, or during a schema upgrade, waits
+  until that step has finished (the reason says so); a schema step is never interrupted.
+  A system created with `suspend: true` starts nothing.
 - `spec.suspend: false` (or removing it) resumes: the system starts like a running one
-  returning from an outage, servers first, then the frontend and web service.
+  returning from an outage, with the current spec. A version changed while suspended is
+  applied as a normal upgrade after resuming.
 
 ### Configuration change
 
