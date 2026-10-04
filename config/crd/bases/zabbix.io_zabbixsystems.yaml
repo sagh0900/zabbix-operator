@@ -2973,6 +2973,11 @@ spec:
                     desired:
                       format: int32
                       type: integer
+                    message:
+                      description: |-
+                        Message says why a pod is not ready when Kubernetes reports a reason, for example
+                        that it cannot be scheduled or its image cannot be pulled.
+                      type: string
                     name:
                       description: Name is server, web, webservice, agent or proxy/<name>.
                       type: string

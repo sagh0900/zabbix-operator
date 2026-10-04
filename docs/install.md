@@ -28,7 +28,12 @@ kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/$
 kubectl -n zabbix-operator rollout status deployment/zabbix-operator-controller-manager
 ```
 
-The operator watches all namespaces. To deploy it with kustomize or Argo CD instead, use
+The operator watches all namespaces. `install.yaml` labels the `zabbix-operator` namespace
+for Pod Security `restricted`, which the operator meets. If that namespace already exists with
+a label managed elsewhere, server-side apply reports a conflict on it; keep your label (apply
+the other objects) or take it over with `--force-conflicts`.
+
+To deploy it with kustomize or Argo CD instead, use
 the `config/default` base and set the image:
 
 ```yaml
@@ -70,7 +75,21 @@ Points to decide here:
 - **Pooler.** `host` may point at a CNPG `Pooler` Service in session mode. Schema work always
   uses `directHost`, which must reach the primary directly (default `<cluster>-rw`).
 - **Backups.** Configure CNPG backups now. Schema upgrades wait for a recent completed
-  `Backup` (see [Upgrades](upgrades.md)).
+  `Backup` (see [Upgrades](upgrades.md)). [`examples/backup-s3.yaml`](../examples/backup-s3.yaml)
+  sets up the barman-cloud plugin for an S3-compatible store:
+  - Use `lz4` compression. `gzip` compresses on a single core; on a 13 GB database it ran at
+    2 MB/s, where `lz4` reached 55 MB/s.
+  - For stores other than AWS, the example sets the region and turns off the request
+    checksums newer AWS clients send, which many S3-compatible stores reject.
+  - A backup taken from a standby first waits for the next checkpoint (`checkpoint_timeout`,
+    5 minutes by default), so it can look idle for a few minutes.
+  - The plugin must run in the CloudNativePG operator's namespace. Other CNPG-I plugins
+    there derived from it (such as a pgBackRest plugin) can use the same leader-election
+    lease; the plugin then never starts serving and clusters report "error while
+    interacting with plugins". It runs as one replica, so install it with
+    `--set 'additionalArgs={--leader-elect=false}'`.
+  - Where another operator also defines a `Backup` kind (for example the MariaDB operator),
+    `kubectl get backup` may show that one; use `kubectl get backups.postgresql.cnpg.io`.
 - **Shutdown time.** Zabbix keeps its database connections open, so every planned
   PostgreSQL restart waits CNPG's `smartShutdownTimeout` (180 s by default) before CNPG
   closes them. A lower value, for example 30 s, shortens CNPG maintenance; Zabbix reconnects

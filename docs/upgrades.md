@@ -157,6 +157,8 @@ with this operator version:
 | Install 7.4.7 | 16 | Running in 70 s |
 | 7.4.7 → 8.0.0rc1 (line upgrade) | 16 | 26 s, no restarts |
 | PostgreSQL 14 → 16 → 17 in place under running Zabbix 7.0 | 14 to 17 | Zabbix reconnects, never stopped |
+| Adopt a running 7.4.7 installation (12 GB database, real data) | 16 | Running 25 s after creation |
+| 7.4.7 → 8.0.0rc1 on that database | 16 | 60 s, servers stopped for about 35 s, no restarts |
 
 Other patch releases of these lines work the same way: they share the line's schema.
 

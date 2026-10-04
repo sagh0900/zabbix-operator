@@ -157,6 +157,7 @@ creates its own. [Migration](migration.md) uses this on purpose.
 | Phase `Degraded`, "Waiting for database" | `kubectl get zabbixdatabase` and its conditions; the CNPG cluster status |
 | Phase `Blocked` | `phaseReason` and the Warning event; [Upgrades](upgrades.md#run-it) lists the reasons |
 | "No active server node" | `zabbix_server -R ha_status` in a server pod; server logs; database reachability |
+| A component is short of ready pods | `kubectl get zsys <name> -o jsonpath='{.status.components}'`: `message` names the first stuck pod and why (unschedulable, image pull, crash loop), also recorded as a `PodsNotReady` event |
 | A pod keeps being replaced | Events of the system and the pod; `zabbix_operator_pod_replacements_total{reason="failed"}` |
 | Jobs fail | Failed Jobs are deleted after a minute and run again; the system's events and `zabbix_operator_job_runs_total{result="failed"}` record them, and a failed pod's termination message holds the JSON result while it exists |
 | Operator errors | `kubectl -n zabbix-operator logs deployment/zabbix-operator-controller-manager` |

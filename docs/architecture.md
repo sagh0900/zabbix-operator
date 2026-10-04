@@ -189,7 +189,8 @@ Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Block
 `Suspended`) with a
 one-line `phaseReason`,
 `runningVersion`, `activeServer` (pod name and IP of the active HA node), per-component
-ready counts, `registeredProxies`, and conditions `DatabaseReady`, `ServerActive`, `WebReady`,
+ready counts (with a `message` naming the first stuck pod and why, such as unschedulable or
+an image that cannot be pulled, also recorded as a `PodsNotReady` event), `registeredProxies`, and conditions `DatabaseReady`, `ServerActive`, `WebReady`,
 `Upgrading`, `UpgradeBlocked`, `Conflict`, `UnverifiedVersion` and, with proxy registration,
 `ProxiesRegistered`.
 
@@ -490,7 +491,7 @@ make a live HA node look stale.
 |---|---|---|
 | `precheck` | Before installing and before any upgrade | Connects through `directHost`; reports the PostgreSQL version, the schema level and the number of active HA nodes; fails with a reason when the connection is not to the primary (`NotPrimary`), PostgreSQL is outside the target line's range (`PostgreSQLTooOld`, `PostgreSQLTooNew`) or the schema is newer than the target (`Downgrade`). An unsupported line is refused by the operator before the Job runs |
 | `ha-reset` | Before the standalone step of a major upgrade | Deletes all `ha_node` rows; refuses while any node has heartbeated within the last 30 seconds, which means a server is still running somewhere |
-| `ha-gc` | Every 5 minutes while `Running` | Deletes `ha_node` rows whose name is not a live server Pod and whose last access is older than a safety window; reports how many rows were removed |
+| `ha-gc` | Every 5 minutes while `Running` | Deletes `ha_node` rows whose name is not a live server Pod and whose last access is older than a safety window; reports how many rows were removed. A successful run's Job and pod are deleted once the status records it; a failed run stays, with its pod, for an hour for inspection, and is reported by a `HANodeGCFailed` event |
 
 ## Lifecycle
 

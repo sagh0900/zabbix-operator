@@ -41,6 +41,36 @@ selects any of these alone (for example only `app.kubernetes.io/name: zabbix`) w
 send traffic to the new pods, including standby servers that do not accept connections;
 add a label of the old pods to its selector before step 3.
 
+### A previous Zabbix operator
+
+Another operator that manages Zabbix with CRDs in the `zabbix.io` group must be removed
+first: CRD names can collide (`zabbixdatabases.zabbix.io`), and two controllers must never
+manage the same workloads. Removing it means an outage until the new system runs, so this
+path replaces the side-by-side cutover below with a short stop:
+
+1. Take a backup. Check that the CNPG cluster, its Pooler and the credentials Secret have no
+   owner reference to the old resources, so deleting them cannot cascade into the database.
+2. Scale the old operator to 0. Remove finalizers from its resources
+   (`kubectl patch ... --type merge -p '{"metadata":{"finalizers":null}}'`), so nothing it
+   would run on deletion fires, then delete them; their Deployments, Services and Ingresses
+   go with them. A cert-manager Certificate owned by the old Ingress goes too; its Secret
+   stays and can be reused by a new Certificate.
+3. Uninstall the old operator (Helm does not delete CRDs it installed outside its release),
+   delete its CRDs, webhooks and cluster RBAC.
+4. Install this operator and create the ZabbixSystem. It adopts the existing schema; the
+   measured outage on a test system was about 5 minutes.
+
+### Agents and proxies deployed separately
+
+- An agent DaemonSet already running on the nodes (for example the Zabbix Helm chart's) uses
+  host port 10050. Remove it before enabling `agent`, or leave `agent` disabled; otherwise the
+  operator's agent pods stay Pending and the system's `agent` component reports
+  "unschedulable: ... didn't have free ports". Agents use the node name as host name, as the
+  Helm chart's agents do, so existing hosts keep their history.
+- In-cluster proxies are named `<name>-<i>`. To keep an existing proxy's hosts, rename the
+  proxy in Zabbix to the new name before switching (for example `proxy.update` with the new
+  `name`); proxy registration then adopts it with its host assignments.
+
 ## 2. Prepare (no impact)
 
 1. Install the operator ([Installation](install.md#1-install-the-operator)).
