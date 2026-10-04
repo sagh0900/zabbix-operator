@@ -353,15 +353,18 @@ system's phase.
 
 ### Exposure
 
-Every component except the agent gets one Service, named `<system>-server`, `<system>-web`,
-`<system>-webservice` and `<proxy>` (passive proxies only), shaped by the component's
-`service` settings. `web` and `webService` can also get an Ingress. The server has no
+Every component except the agent gets a Service, named `<system>-server`, `<system>-web`,
+`<system>-webservice` and `<proxy>` (headless, plus `<proxy>-external` for `LoadBalancer` or
+`NodePort`), shaped by the component's `service` settings. `web` and `webService` can also get an Ingress. The server has no
 Ingress setting: Zabbix trapper traffic on 10051 is a raw TCP protocol, and Kubernetes
 Ingress only routes HTTP. Expose it with the Service (`LoadBalancer` or `NodePort`) and
 its annotations, which also covers load-balancer implementations configured that way.
 
 Labels and annotations set by the user are merged with the operator's own; the operator
-only overwrites the keys it manages (selectors and the owner labels).
+only overwrites the keys it manages (selectors and the owner labels). Every object carries
+the recommended labels `app.kubernetes.io/name: zabbix`, `app.kubernetes.io/component`
+(`server`, `web`, `webservice`, `proxy`, `agent`) and `app.kubernetes.io/instance: <system>`;
+selectors use the `zabbix.io/*` labels.
 
 ### Conflicts
 
@@ -378,9 +381,9 @@ The operator never disrupts the database and never stops Zabbix because of it.
   a lost quorum), running server pods are left alone. Zabbix reconnects by itself, and
   stopping it would only lose buffered data. The system reports `DatabaseReady=False`,
   starts nothing new and runs no upgrade step.
-- When the database is back, the system checks that a server node is active again. If
-  none becomes active within a grace period, it replaces server pods one at a time,
-  standby first.
+- When the database is back, Zabbix resumes on its own. If no server node becomes active,
+  `ServerActive` stays False and the `ZabbixServerNoActiveNode` alert fires; the operator
+  does not restart servers for it.
 
 ### PostgreSQL version
 
@@ -485,8 +488,8 @@ make a live HA node look stale.
 1. Wait for `ZabbixDatabase` `Ready`.
 2. Start one server Pod in standalone mode (no HA node name). The image entrypoint creates
    the schema when the database is empty.
-3. When that Pod is Ready, delete it, then start the configured number of HA server Pods
-   one after another.
+3. When that Pod is Ready, delete it; once it has terminated, start the configured number of
+   HA server Pods.
 4. Start web, web service, proxies and agents.
 
 An existing schema is detected and never re-created, so pointing a new system at a populated
@@ -605,7 +608,7 @@ All series carry `namespace` and the owning resource name (`database` or `system
 | `zabbix_operator_system_phase` | gauge | 1 for the current `phase` of the system |
 | `zabbix_operator_system_info` | gauge | Always 1; labels `version` and `running_version` |
 | `zabbix_operator_component_pods_desired` | gauge | Desired pods per `component` (`server`, `web`, `webservice`, `proxy/<name>`) |
-| `zabbix_operator_component_pods_ready` | gauge | Ready pods per `component` (server: running pods, since standby nodes are never Ready) |
+| `zabbix_operator_component_pods_ready` | gauge | Ready pods per `component` (standby servers are Ready too) |
 | `zabbix_operator_pod_replacements_total` | counter | Pods the operator deleted, per `component` and `reason` (`rollout`, `failed`, `scaledown`) |
 | `zabbix_operator_server_active_nodes` | gauge | Server pods currently routed as active (expected 1) |
 | `zabbix_operator_server_failovers_total` | counter | Changes of the active server pod |
