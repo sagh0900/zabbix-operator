@@ -130,7 +130,10 @@ The metrics endpoint requires a token bound to the `zabbix-operator-metrics-read
 ClusterRole. The bundle binds it to the ServiceAccount `prometheus-k8s` in `monitoring`;
 patch the subject of the ClusterRoleBinding `zabbix-operator-metrics-reader-prometheus` for
 another Prometheus (for kube-prometheus-stack: `<release>-kube-prometheus-prometheus`), and
-add the labels your Prometheus selects ServiceMonitors and rules by. The
+add the labels your Prometheus selects ServiceMonitors and rules by (for
+kube-prometheus-stack: `release: <release>`). The ServiceMonitor honours the operator's
+labels, so `namespace` on every series is the namespace of the ZabbixSystem or ZabbixDatabase
+it describes. The
 alerts and what to do about them are in [Alerts](alerts.md).
 
 ## Uninstall

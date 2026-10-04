@@ -126,3 +126,16 @@ func TestSystemHelpers(t *testing.T) {
 		}
 	}
 }
+
+// TestServiceMonitorHonorsLabels guards the namespace label: the operator's series name the
+// namespace of the resource they describe, which Prometheus would otherwise overwrite with
+// the operator pod's namespace (keeping the original only as exported_namespace).
+func TestServiceMonitorHonorsLabels(t *testing.T) {
+	data, err := os.ReadFile("../../config/monitoring/servicemonitor.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^\s+honorLabels: true$`).Match(data) {
+		t.Error("the ServiceMonitor endpoint must set honorLabels: true")
+	}
+}
