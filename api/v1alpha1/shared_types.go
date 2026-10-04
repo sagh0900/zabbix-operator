@@ -92,7 +92,8 @@ type PodSettings struct {
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 
-	// ImagePullSecrets of the pods.
+	// ImagePullSecrets of the pods. The server's pull secrets also pull the operator image
+	// for the operator's database Jobs.
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
