@@ -260,11 +260,16 @@ func (j *journey) upgradeTo80(t *testing.T) {
 			"agent":      map[string]any{"image": rc1Agent},
 			"proxies":    []any{map[string]any{"name": "e2e-proxy", "mode": "active", "replicas": 1, "image": rc1Proxy}},
 		})
-		sys := waitPhase(t, ns, zabbixv1alpha1.PhaseRunning, "active, 1 standby", 10*time.Minute)
+		waitFor(t, 10*time.Minute, "Running on 8.0.0rc1", func() error {
+			sys := system(t, ns)
+			if sys.Status.ObservedGeneration != sys.Generation || sys.Status.RunningVersion != "8.0.0rc1" ||
+				sys.Status.Phase != zabbixv1alpha1.PhaseRunning || !strings.Contains(sys.Status.PhaseReason, "active, 1 standby") {
+				return fmt.Errorf("generation %d/%d, running %q, %s %q", sys.Status.ObservedGeneration, sys.Generation,
+					sys.Status.RunningVersion, sys.Status.Phase, sys.Status.PhaseReason)
+			}
+			return nil
+		})
 		t.Logf("upgraded 7.4.7 -> 8.0.0rc1 in %s", time.Since(start).Round(time.Second))
-		if sys.Status.RunningVersion != "8.0.0rc1" {
-			t.Errorf("runningVersion %q", sys.Status.RunningVersion)
-		}
 		if v := sql(t, ns, "select mandatory from dbversion"); v != "7050195" {
 			t.Errorf("dbversion %s, want 7050195", v)
 		}

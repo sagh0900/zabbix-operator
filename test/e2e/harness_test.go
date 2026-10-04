@@ -202,6 +202,11 @@ func waitPhase(t *testing.T, ns string, phase zabbixv1alpha1.SystemPhase, reason
 	var sys *zabbixv1alpha1.ZabbixSystem
 	waitFor(t, timeout, fmt.Sprintf("phase %s %q", phase, reason), func() error {
 		sys = system(t, ns)
+		// A status computed for an older spec does not count: right after a change the
+		// previous phase is still reported.
+		if sys.Status.ObservedGeneration != sys.Generation {
+			return fmt.Errorf("status for generation %d, spec is %d", sys.Status.ObservedGeneration, sys.Generation)
+		}
 		if sys.Status.Phase != phase || !strings.Contains(sys.Status.PhaseReason, reason) {
 			return fmt.Errorf("phase %s %q", sys.Status.Phase, sys.Status.PhaseReason)
 		}
