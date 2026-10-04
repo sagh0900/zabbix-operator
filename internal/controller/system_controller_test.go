@@ -781,15 +781,23 @@ func TestSystem_HANodeGCFailureIsKept(t *testing.T) {
 	requireEnvtest(t)
 	ns := newNamespace(t)
 	installed(t, ns, "7.0.25", nil)
+	failed := pendingJob(t, ns, jobs.CommandHAGC)
 	finishJob(t, ns, jobs.Result{Command: jobs.CommandHAGC, Reason: "DatabaseError", Message: "connection refused"})
 	waitEvent(t, ns, corev1.EventTypeWarning, "HANodeGCFailed", "connection refused")
 	time.Sleep(3 * activeCheckInterval)
+	kept := &batchv1.Job{}
+	if err := k8s.Get(context.Background(), client.ObjectKeyFromObject(failed), kept); err != nil || kept.UID != failed.UID ||
+		len(kept.Status.Conditions) == 0 {
+		t.Errorf("the failed ha-gc Job must be kept: %v", err)
+	}
+	// A run in the same interval would reuse the Job's name; one with another name belongs to
+	// the next interval, which the test may cross.
 	list := &batchv1.JobList{}
 	if err := k8s.List(context.Background(), list, client.InNamespace(ns), client.MatchingLabels{jobs.LabelJob: jobs.CommandHAGC}); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Items) != 1 || len(list.Items[0].Status.Conditions) == 0 {
-		t.Errorf("want the finished, failed ha-gc Job kept and no new run; got %d Jobs", len(list.Items))
+	if len(list.Items) > 2 {
+		t.Errorf("%d ha-gc Jobs: the failed run was retried", len(list.Items))
 	}
 }
 
