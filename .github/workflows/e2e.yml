@@ -24,8 +24,9 @@ jobs:
           go-version-file: go.mod
       - name: Install kind
         run: |
-          curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
-          chmod +x /usr/local/bin/kind
+          curl -fsSLo "$RUNNER_TEMP/kind" https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          sudo install -m 0755 "$RUNNER_TEMP/kind" /usr/local/bin/kind
+          kind version
       - name: End-to-end suite
         run: make test-e2e
       - name: Cluster state on failure
