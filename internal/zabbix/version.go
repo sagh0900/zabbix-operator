@@ -89,14 +89,18 @@ func sign(d int) int {
 func (v Version) Line() string { return fmt.Sprintf("%d.%d", v.Major, v.Minor) }
 
 // SchemaLevel is the database schema level this version runs, in the units of
-// SchemaLevelOf: 700 for 7.0, 800 for 8.0. Pre-releases of an LTS run the schema of the
-// development series before it (8.0.0rc1 reports 7050195, level 705).
+// SchemaLevelOf: 700 for 7.0, 704 for 7.4, 800 for 8.0. Pre-releases of a line run the
+// schema of the development series before it: 8.0.0rc1 reports 7050195 (level 705), and
+// 7.4.0rc1 runs the 7.3 series (level 703).
 func (v Version) SchemaLevel() int {
-	level := v.Major*100 + v.Minor
-	if v.Pre != "" && v.Minor == 0 {
+	switch {
+	case v.Pre == "" || v.Patch != 0:
+		return v.Major*100 + v.Minor
+	case v.Minor == 0:
 		return (v.Major-1)*100 + 5
+	default:
+		return v.Major*100 + v.Minor - 1
 	}
-	return level
 }
 
 // SchemaLevelOf converts the dbversion.mandatory value of a Zabbix database to a
@@ -104,9 +108,12 @@ func (v Version) SchemaLevel() int {
 func SchemaLevelOf(mandatory int) int { return mandatory / 10000 }
 
 // supportedLines are the release lines this operator runs, with the minimum
-// PostgreSQL major version each requires.
+// PostgreSQL major version each requires. Every line runs, and every newer line can be
+// upgraded to, through a schema upgrade.
 var supportedLines = map[string]int{
 	"7.0": 13,
+	"7.2": 13,
+	"7.4": 13,
 	"8.0": 15,
 }
 

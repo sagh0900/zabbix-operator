@@ -9,7 +9,7 @@ system. The manifests it uses are in [`examples/`](../examples).
 |---|---|
 | Kubernetes | 1.29 or newer (CEL validation rules) |
 | CloudNativePG | Any release with the `postgresql.cnpg.io/v1` API; tested with 1.30. In-place PostgreSQL major upgrades need 1.26 or newer |
-| PostgreSQL | Zabbix 7.0: 13 or newer. Zabbix 8.0: 15 to 18 |
+| PostgreSQL | Zabbix 7.0, 7.2 and 7.4: 13 or newer. Zabbix 8.0: 15 to 18 |
 | Prometheus Operator | Optional, for the monitoring bundle |
 
 Zabbix pods run as non-root. Server and proxy containers keep the default capabilities,

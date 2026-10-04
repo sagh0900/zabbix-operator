@@ -69,6 +69,14 @@ func TestClassify(t *testing.T) {
 		{700, "8.0.0rc1", SchemaUpgrade},
 		{700, "8.0.0", SchemaUpgrade},
 		{704, "8.0.0", SchemaUpgrade}, // a 7.4 database can move to 8.0
+		{704, "8.0.0rc1", SchemaUpgrade},
+		{704, "7.4.7", SameSchema},
+		{700, "7.2.15", SchemaUpgrade},
+		{702, "7.4.0", SchemaUpgrade},
+		{700, "7.4.7", SchemaUpgrade},
+		{703, "7.4.0rc1", SameSchema}, // 7.4 release candidates run the 7.3 series
+		{703, "7.4.0", SchemaUpgrade},
+		{704, "7.2.15", Downgrade},
 		{705, "8.0.0rc1", SameSchema},
 		{705, "8.0.0", SchemaUpgrade}, // release candidate to final release
 		{800, "8.0.3", SameSchema},
@@ -85,7 +93,7 @@ func TestClassify(t *testing.T) {
 
 func TestUnsupportedMessage(t *testing.T) {
 	v, _ := ParseVersion("9.0.0")
-	want := "Zabbix 9.0 is not supported by this operator version (supported lines: 7.0, 8.0)"
+	want := "Zabbix 9.0 is not supported by this operator version (supported lines: 7.0, 7.2, 7.4, 8.0)"
 	if got := UnsupportedMessage(v); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -93,16 +101,23 @@ func TestUnsupportedMessage(t *testing.T) {
 
 func TestPostgresRequirements(t *testing.T) {
 	v := func(s string) Version { r, _ := ParseVersion(s); return r }
-	if !v("7.0.1").Supported() || !v("8.0.0rc1").Supported() || v("7.4.0").Supported() {
-		t.Error("supported lines are 7.0 and 8.0")
+	for _, s := range []string{"7.0.1", "7.2.15", "7.4.7", "8.0.0rc1"} {
+		if !v(s).Supported() {
+			t.Errorf("%s must be supported", s)
+		}
 	}
-	if v("7.0.25").MinPostgres() != 13 || v("8.0.0rc1").MinPostgres() != 15 {
+	for _, s := range []string{"6.0.40", "7.1.0", "7.3.0", "9.0.0"} {
+		if v(s).Supported() {
+			t.Errorf("%s must not be supported", s)
+		}
+	}
+	if v("7.0.25").MinPostgres() != 13 || v("7.4.7").MinPostgres() != 13 || v("8.0.0rc1").MinPostgres() != 15 {
 		t.Errorf("minimums: 7.0 %d, 8.0 %d", v("7.0.25").MinPostgres(), v("8.0.0rc1").MinPostgres())
 	}
 }
 
 func TestCompare(t *testing.T) {
-	ordered := []string{"7.0.1", "7.0.25", "7.0.30", "8.0.0alpha2", "8.0.0beta1", "8.0.0rc1", "8.0.0rc2", "8.0.0", "8.0.1"}
+	ordered := []string{"7.0.1", "7.0.25", "7.0.30", "7.2.15", "7.4.0rc1", "7.4.0", "7.4.7", "8.0.0alpha2", "8.0.0beta1", "8.0.0rc1", "8.0.0rc2", "8.0.0", "8.0.1"}
 	for i := range ordered {
 		for j := range ordered {
 			a, _ := ParseVersion(ordered[i])
