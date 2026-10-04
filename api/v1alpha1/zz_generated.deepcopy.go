@@ -733,6 +733,11 @@ func (in *ZabbixSystemStatus) DeepCopyInto(out *ZabbixSystemStatus) {
 		in, out := &in.LastHANodeGCTime, &out.LastHANodeGCTime
 		*out = (*in).DeepCopy()
 	}
+	if in.RegisteredProxies != nil {
+		in, out := &in.RegisteredProxies, &out.RegisteredProxies
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Components != nil {
 		in, out := &in.Components, &out.Components
 		*out = make([]ComponentStatus, len(*in))

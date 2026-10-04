@@ -38,6 +38,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	zabbixv1alpha1 "github.com/sagh0900/zabbix-operator/api/v1alpha1"
+	"github.com/sagh0900/zabbix-operator/internal/registration"
+	"github.com/sagh0900/zabbix-operator/internal/registration/fakeapi"
 )
 
 // k8s is the client for envtest-based tests; nil when envtest assets are unavailable.
@@ -49,6 +51,23 @@ const testOperatorImage = "zabbix-operator:test"
 // fakeActive plays Zabbix HA in tests: it holds which server pods ("namespace/name")
 // accept trapper connections.
 var fakeActive sync.Map
+
+// fakeAPIs plays the Zabbix API in tests: URL -> *fakeapi.API. Unknown URLs and tokens
+// other than testAPIToken get an API whose every call fails.
+var fakeAPIs sync.Map
+
+const testAPIToken = "test-token"
+
+func fakeZabbixAPI(url, token string) registration.API {
+	if v, ok := fakeAPIs.Load(url); ok && token == testAPIToken {
+		return v.(*fakeapi.API)
+	}
+	down := fakeapi.New()
+	for _, m := range []string{"proxy.get", "proxygroup.get"} {
+		down.SetFail(m, true)
+	}
+	return down
+}
 
 func TestMain(m *testing.M) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
@@ -94,6 +113,7 @@ func TestMain(m *testing.M) {
 			v, ok := fakeActive.Load(p.Namespace + "/" + p.Name)
 			return ok && v.(bool)
 		},
+		ZabbixAPI: fakeZabbixAPI,
 	}).SetupWithManager(mgr); err != nil {
 		fmt.Fprintln(os.Stderr, "setting up system controller:", err)
 		os.Exit(1)

@@ -851,6 +851,13 @@ spec:
                     priorityClassName:
                       description: PriorityClassName of the pods.
                       type: string
+                    proxyGroup:
+                      description: |-
+                        ProxyGroup is the Zabbix proxy group every instance joins when proxy registration is
+                        enabled; the group is created if missing. Agents reach a grouped instance at its pod
+                        DNS name.
+                      maxLength: 255
+                      type: string
                     replicas:
                       default: 1
                       description: Replicas of the proxy.
@@ -1134,7 +1141,9 @@ spec:
                     - name
                     type: object
                   configMapRef:
-                    description: ConfigMapRef selects the list of proxies to register.
+                    description: |-
+                      ConfigMapRef selects a list of proxies outside the cluster to register. In-cluster
+                      proxies from spec.proxies are always registered.
                     properties:
                       key:
                         minLength: 1
@@ -1153,12 +1162,17 @@ spec:
                     description: Prune deletes proxies this system registered that
                       the list no longer contains.
                     type: boolean
+                  url:
+                    description: |-
+                      URL of the Zabbix API, for example https://zabbix.example.com/api_jsonrpc.php. The
+                      default is the frontend Service of this system.
+                    pattern: ^https?://
+                    type: string
                 type: object
                 x-kubernetes-validations:
-                - message: apiTokenSecretRef and configMapRef are required when proxy
-                    registration is enabled
-                  rule: '!has(self.enabled) || !self.enabled || (has(self.apiTokenSecretRef)
-                    && has(self.configMapRef))'
+                - message: apiTokenSecretRef is required when proxy registration is
+                    enabled
+                  rule: '!has(self.enabled) || !self.enabled || has(self.apiTokenSecretRef)'
               server:
                 default: {}
                 description: Server is the Zabbix server, run in native HA mode.
@@ -2958,8 +2972,9 @@ spec:
                 - name
                 x-kubernetes-list-type: map
               conditions:
-                description: 'Conditions: DatabaseReady, ServerActive, WebReady, Upgrading,
-                  UpgradeBlocked, Conflict.'
+                description: |-
+                  Conditions: DatabaseReady, ServerActive, WebReady, Upgrading, UpgradeBlocked, Conflict,
+                  ProxiesRegistered.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -3042,6 +3057,14 @@ spec:
                   PhaseReason explains the phase in one line, for example what an upgrade or a
                   rollout is waiting for.
                 type: string
+              registeredProxies:
+                description: |-
+                  RegisteredProxies are the Zabbix proxies this system registered; only these are
+                  updated or pruned.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               runningVersion:
                 description: RunningVersion is the Zabbix version the database schema
                   and server run.

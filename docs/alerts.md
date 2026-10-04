@@ -132,3 +132,17 @@ The agent DaemonSet has been ready on fewer nodes than it should run on for 15 m
    that (Pod Security `privileged`), and the agent port 10050 must be free on every node.
 3. Nodes the agent should not run on are excluded with `agent.nodeSelector`,
    `agent.affinity` or missing `agent.tolerations`.
+
+## ZabbixProxyRegistrationFailing
+
+The last proxy registration sync failed and has kept failing for 15 minutes. Running proxies
+keep working; new or changed proxies are not registered until it succeeds.
+
+1. `kubectl get zabbixsystem <system> -n <namespace> -o yaml`: the `ProxiesRegistered`
+   condition and the `ProxyRegistrationFailed` events carry the Zabbix API error.
+2. `InvalidConfiguration`: fix the proxy list in the ConfigMap or the token Secret.
+3. An authorization error: the API token in `proxyRegistration.apiTokenSecretRef` expired,
+   was revoked, or its user lacks the permission to manage proxies (Super admin role).
+4. A connection error: the frontend is not ready, or `proxyRegistration.url` is wrong.
+5. Deleting a proxy that still monitors hosts fails; move those hosts first.
+

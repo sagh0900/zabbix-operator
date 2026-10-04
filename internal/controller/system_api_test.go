@@ -169,7 +169,7 @@ func TestSystemAPI_FieldRules(t *testing.T) {
 		{"agent with image", func(s *zabbixv1alpha1.ZabbixSystemSpec) {
 			s.Agent.Enabled, s.Agent.Image = true, "zabbix/zabbix-agent2:ubuntu-7.0.25"
 		}, ""},
-		{"registration needs refs", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.ProxyRegistration.Enabled = true }, "apiTokenSecretRef and configMapRef"},
+		{"registration needs a token", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.ProxyRegistration.Enabled = true }, "apiTokenSecretRef is required"},
 		{"approveMajor must be a line", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "8.0.0" }, "spec.upgrade.approveMajor"},
 		{"approveMajor 8.0", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Upgrade.ApproveMajor = "8.0" }, ""},
 		{"duplicate proxy names", func(s *zabbixv1alpha1.ZabbixSystemSpec) {

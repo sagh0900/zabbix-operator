@@ -14,8 +14,10 @@ Instructions for anyone, human or automated, changing this code.
   reference to the ZabbixSystem, managed through `internal/podset`; agents are a
   DaemonSet. Do not introduce Deployments or StatefulSets, and do not add child CRDs.
 - Supported Zabbix lines are 7.0 and 8.0. Major upgrades require explicit approval.
-- No external leader election for Zabbix server: native HA plus the readiness probe on
-  10051 decides routing.
+- No external leader election for Zabbix server: native HA decides the active node, and
+  the operator's probe of port 10051 routes the server Service to it.
+- The only Zabbix configuration the operator changes through the Zabbix API is proxy
+  registration, and only for proxies it is asked to manage or has recorded as registered.
 - Never stop Zabbix because the database is unavailable, and never write to CNPG.
 - Write code and documentation in the present tense about what the system does. Do not
   reference past versions, earlier designs, bug numbers or dates.

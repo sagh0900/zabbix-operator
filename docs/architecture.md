@@ -139,6 +139,7 @@ spec:
     - name: proxy-dc1
       mode: active             # active | passive
       replicas: 2              # instances get hostnames proxy-dc1-0, proxy-dc1-1
+      proxyGroup: dc1          # optional; Zabbix proxy group, used by proxy registration
 
   agent:
     enabled: true
@@ -171,15 +172,14 @@ stored without a schema to keep the CRD small enough for client-side apply; the 
 validates them when the operator creates the pods, and errors surface as events and
 conditions on the ZabbixSystem.
 
-Validation rejects, at apply time: a malformed version, lowering `version`, changing
-`databaseRef`, an enabled agent without an image, and enabled proxy
-registration without its references.
+Validation rejects, at apply time: a malformed version, changing `databaseRef`, an enabled
+agent without an image, and enabled proxy registration without an API token reference.
 
 Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Blocked`) with a
 one-line `phaseReason`,
 `runningVersion`, `activeServer` (pod name and IP of the active HA node), per-component
-ready counts, and conditions `DatabaseReady`, `ServerActive`, `WebReady`, `Upgrading`,
-`UpgradeBlocked`, `Conflict`.
+ready counts, `registeredProxies`, and conditions `DatabaseReady`, `ServerActive`, `WebReady`,
+`Upgrading`, `UpgradeBlocked`, `Conflict` and, with proxy registration, `ProxiesRegistered`.
 
 `kubectl get zsys` shows the phase and its reason:
 
@@ -405,34 +405,57 @@ standalone step of a major upgrade.
 
 ## Proxy registration
 
-Optional, off by default. When `proxyRegistration.enabled` is true, the operator keeps the
-proxies listed in a ConfigMap registered in Zabbix through the Zabbix API, using an API
-token from a Secret.
+Optional, off by default. When `proxyRegistration.enabled` is true, the operator keeps
+proxies registered in Zabbix through the Zabbix API, authenticated with an API token from a
+Secret: every instance of the in-cluster proxies in `spec.proxies`, plus an optional list of
+proxies outside the cluster from a ConfigMap.
 
 ```yaml
 proxyRegistration:
   enabled: true
   apiTokenSecretRef: { name: zabbix-api-token, key: token }
-  configMapRef: { name: zabbix-proxies, key: proxies.yaml }
-  prune: false                 # true: delete proxies this system registered that the list no longer contains
+  configMapRef: { name: zabbix-proxies, key: proxies.yaml }   # optional
+  url: https://zabbix.example.com/api_jsonrpc.php             # optional, default: the frontend Service
+  prune: false                 # true: delete proxies this system registered that are no longer wanted
 ```
 
 ```yaml
 # proxies.yaml
-- name: proxy-dc1
-  mode: active
-- name: proxy-dc2
-  mode: active
-  proxyGroup: dc               # optional; created if missing
+- name: proxy-remote1          # the proxy's Hostname
+  mode: active                 # default
+- name: proxy-remote2
+  proxyGroup: remote           # optional; created if missing
+  localAddress: proxy-remote2.example.com   # where agents reach a grouped proxy
 - name: proxy-edge
   mode: passive
   address: proxy-edge.example.com   # required for passive proxies
   port: 10051                       # optional, default 10051
+  description: Edge site            # optional
 ```
 
-In-cluster proxies from `spec.proxies` are registered the same way. The operator only
-updates or deletes proxies it registered, recorded in the system status, so proxies managed
-by hand are never touched. Encryption settings are left to Zabbix.
+How it behaves:
+
+- In-cluster instances are registered under their host names (`<name>-<i>`). Passive
+  instances get their pod DNS name as address; with `proxyGroup`, every instance joins that
+  group with its pod DNS name as local address.
+- A listed proxy that already exists in Zabbix is adopted and updated to match. Proxies that
+  are neither wanted nor recorded in `status.registeredProxies` are never touched, so proxies
+  managed by hand stay as they are.
+- A recorded proxy that is no longer wanted (removed from the list, a proxy scaled down or
+  deleted) is deleted only with `prune: true`; otherwise it stays in Zabbix and on record.
+  Zabbix refuses to delete a proxy that still monitors hosts.
+- The operator syncs when the list, the token or the in-cluster proxies change, every 5
+  minutes to repair changes made by hand, and 30 seconds after a failure. Syncs start once
+  the system has been installed and its frontend is ready.
+- The outcome is the `ProxiesRegistered` condition, `ProxiesRegistered` and
+  `ProxyRegistrationFailed` events, metrics and the `ZabbixProxyRegistrationFailing` alert.
+  A failure never changes the system's phase.
+- Disabling registration forgets `status.registeredProxies` and leaves Zabbix as it is.
+  Proxy groups the operator created are not deleted.
+- Encryption settings are left to Zabbix.
+
+The token belongs to a Zabbix user allowed to manage proxies (the Super admin role); create
+it under *Users → API tokens* and store it in the Secret.
 
 ## Jobs
 
@@ -585,6 +608,9 @@ All series carry `namespace` and the owning resource name (`database` or `system
 | `zabbix_operator_hanode_gc_last_success_timestamp_seconds` | gauge | Time of the last successful `ha-gc` run |
 | `zabbix_operator_agent_nodes_desired` | gauge | Nodes that should run an agent (only when the agent is enabled) |
 | `zabbix_operator_agent_nodes_ready` | gauge | Nodes with a ready agent (only when the agent is enabled) |
+| `zabbix_operator_proxies_registered` | gauge | Proxies kept registered in Zabbix (only when proxy registration is enabled) |
+| `zabbix_operator_proxy_registration_failing` | gauge | 1 while the last proxy registration sync failed (only when enabled) |
+| `zabbix_operator_proxy_registration_syncs_total` | counter | Syncs with the Zabbix API per `result` (`succeeded`, `failed`) |
 
 The controller-runtime metrics (reconcile counts, errors and durations, work-queue depth)
 are exported as well.
@@ -608,7 +634,8 @@ are exported as well.
 | lifecycle | `ZabbixUpgradeStuck` | An upgrade runs for longer than 2h |
 | lifecycle | `ZabbixOperatorJobFailing` | A Job failed twice in 1h |
 | lifecycle | `ZabbixHANodeGCStale` | No successful `ha-gc` for 30m while the system is `Running` |
-| agent | `ZabbixAgentNodesMissing` | Agents ready on fewer nodes than desired for 15m |
+| workloads | `ZabbixAgentNodesMissing` | Agents ready on fewer nodes than desired for 15m |
+| workloads | `ZabbixProxyRegistrationFailing` | Proxy registration failing for 15m |
 
 Thresholds are rule parameters that can be adjusted with a kustomize patch.
 
@@ -617,7 +644,8 @@ Thresholds are rule parameters that can be adjusted with a kustomize patch.
 One Grafana dashboard, `Zabbix Operator`, with a namespace and system selector: database
 readiness and primary changes, system phase and version, pods desired versus ready per
 component, active server node and failovers, pod replacements, upgrade and Job status,
-`ha_node` GC, agent coverage (shown only when agent metrics exist), and operator health.
+`ha_node` GC, agent coverage and registered proxies (shown only when their metrics exist),
+and operator health.
 It is published as plain JSON and as a ConfigMap labelled `grafana_dashboard: "1"` for the
 Grafana sidecar.
 

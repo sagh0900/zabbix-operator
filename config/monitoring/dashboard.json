@@ -1116,7 +1116,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 12,
         "x": 0,
         "y": 60
       },
@@ -1137,6 +1137,61 @@
           },
           "expr": "zabbix_operator_agent_nodes_desired{namespace=~\"$namespace\",system=~\"$system\"}",
           "legendFormat": "{{system}} desired",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Registered proxies",
+      "description": "Proxies the operator keeps registered in Zabbix, and syncs with the Zabbix API by result. Empty when proxy registration is disabled.",
+      "id": 26,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 60
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "zabbix_operator_proxies_registered{namespace=~\"$namespace\",system=~\"$system\"}",
+          "legendFormat": "{{system}} registered",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (system, result) (increase(zabbix_operator_proxy_registration_syncs_total{namespace=~\"$namespace\",system=~\"$system\"}[$__rate_interval]))",
+          "legendFormat": "{{system}} syncs {{result}}",
           "refId": "B"
         }
       ],

@@ -28,6 +28,8 @@ const (
 	SystemUpgrading      = "Upgrading"
 	SystemUpgradeBlocked = "UpgradeBlocked"
 	SystemConflict       = "Conflict"
+	// SystemProxiesRegistered is True when every listed proxy is registered in Zabbix.
+	SystemProxiesRegistered = "ProxiesRegistered"
 )
 
 // UpgradeStep is a step of a schema upgrade.
@@ -246,6 +248,13 @@ type ProxySpec struct {
 	// +kubebuilder:default={}
 	// +optional
 	Service ServiceSettings `json:"service,omitempty"`
+
+	// ProxyGroup is the Zabbix proxy group every instance joins when proxy registration is
+	// enabled; the group is created if missing. Agents reach a grouped instance at its pod
+	// DNS name.
+	// +kubebuilder:validation:MaxLength=255
+	// +optional
+	ProxyGroup string `json:"proxyGroup,omitempty"`
 }
 
 // AgentSpec configures Zabbix agent 2, run on every eligible node.
@@ -259,7 +268,7 @@ type AgentSpec struct {
 }
 
 // ProxyRegistrationSpec keeps proxies registered in Zabbix through its API.
-// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.apiTokenSecretRef) && has(self.configMapRef))",message="apiTokenSecretRef and configMapRef are required when proxy registration is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || has(self.apiTokenSecretRef)",message="apiTokenSecretRef is required when proxy registration is enabled"
 type ProxyRegistrationSpec struct {
 	// Enabled turns proxy registration on.
 	// +optional
@@ -269,9 +278,16 @@ type ProxyRegistrationSpec struct {
 	// +optional
 	APITokenSecretRef *SecretKeyReference `json:"apiTokenSecretRef,omitempty"`
 
-	// ConfigMapRef selects the list of proxies to register.
+	// ConfigMapRef selects a list of proxies outside the cluster to register. In-cluster
+	// proxies from spec.proxies are always registered.
 	// +optional
 	ConfigMapRef *ConfigMapKeyReference `json:"configMapRef,omitempty"`
+
+	// URL of the Zabbix API, for example https://zabbix.example.com/api_jsonrpc.php. The
+	// default is the frontend Service of this system.
+	// +kubebuilder:validation:Pattern=`^https?://`
+	// +optional
+	URL string `json:"url,omitempty"`
 
 	// Prune deletes proxies this system registered that the list no longer contains.
 	// +optional
@@ -315,13 +331,20 @@ type ZabbixSystemStatus struct {
 	// +optional
 	LastHANodeGCTime *metav1.Time `json:"lastHANodeGCTime,omitempty"`
 
+	// RegisteredProxies are the Zabbix proxies this system registered; only these are
+	// updated or pruned.
+	// +listType=set
+	// +optional
+	RegisteredProxies []string `json:"registeredProxies,omitempty"`
+
 	// Components reports desired and ready pods per component.
 	// +listType=map
 	// +listMapKey=name
 	// +optional
 	Components []ComponentStatus `json:"components,omitempty"`
 
-	// Conditions: DatabaseReady, ServerActive, WebReady, Upgrading, UpgradeBlocked, Conflict.
+	// Conditions: DatabaseReady, ServerActive, WebReady, Upgrading, UpgradeBlocked, Conflict,
+	// ProxiesRegistered.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
