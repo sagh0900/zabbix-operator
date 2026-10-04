@@ -603,7 +603,7 @@ func TestSystem_ServiceSettingsAndIngress(t *testing.T) {
 	ns := newNamespace(t)
 	ctx := context.Background()
 	installed(t, ns, "7.0.25", func(s *zabbixv1alpha1.ZabbixSystem) {
-		s.Spec.Server.Service = zabbixv1alpha1.ServiceSettings{Type: corev1.ServiceTypeLoadBalancer, LoadBalancerIP: "10.11.165.130",
+		s.Spec.Server.Service = zabbixv1alpha1.ServiceSettings{Type: corev1.ServiceTypeLoadBalancer, LoadBalancerIP: "10.0.0.10",
 			Annotations: map[string]string{"metallb.universe.tf/allow-shared-ip": "zabbix"}}
 		s.Spec.Web.Ingress = zabbixv1alpha1.IngressSettings{Enabled: true, ClassName: ptr.To("traefik"),
 			Hosts: []zabbixv1alpha1.IngressHost{{Host: "zabbix.example.com"}}}
@@ -612,7 +612,7 @@ func TestSystem_ServiceSettingsAndIngress(t *testing.T) {
 	if err := k8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: "zabbix-server"}, svc); err != nil {
 		t.Fatal(err)
 	}
-	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer || svc.Spec.LoadBalancerIP != "10.11.165.130" || //nolint:staticcheck // the field under test
+	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer || svc.Spec.LoadBalancerIP != "10.0.0.10" || //nolint:staticcheck // the field under test
 		svc.Annotations["metallb.universe.tf/allow-shared-ip"] != "zabbix" {
 		t.Errorf("server Service %+v %v", svc.Spec, svc.Annotations)
 	}
@@ -781,15 +781,23 @@ func TestSystem_HANodeGCFailureIsKept(t *testing.T) {
 	requireEnvtest(t)
 	ns := newNamespace(t)
 	installed(t, ns, "7.0.25", nil)
+	failed := pendingJob(t, ns, jobs.CommandHAGC)
 	finishJob(t, ns, jobs.Result{Command: jobs.CommandHAGC, Reason: "DatabaseError", Message: "connection refused"})
 	waitEvent(t, ns, corev1.EventTypeWarning, "HANodeGCFailed", "connection refused")
 	time.Sleep(3 * activeCheckInterval)
+	kept := &batchv1.Job{}
+	if err := k8s.Get(context.Background(), client.ObjectKeyFromObject(failed), kept); err != nil || kept.UID != failed.UID ||
+		len(kept.Status.Conditions) == 0 {
+		t.Errorf("the failed ha-gc Job must be kept: %v", err)
+	}
+	// A run in the same interval would reuse the Job's name; one with another name belongs to
+	// the next interval, which the test may cross.
 	list := &batchv1.JobList{}
 	if err := k8s.List(context.Background(), list, client.InNamespace(ns), client.MatchingLabels{jobs.LabelJob: jobs.CommandHAGC}); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Items) != 1 || len(list.Items[0].Status.Conditions) == 0 {
-		t.Errorf("want the finished, failed ha-gc Job kept and no new run; got %d Jobs", len(list.Items))
+	if len(list.Items) > 2 {
+		t.Errorf("%d ha-gc Jobs: the failed run was retried", len(list.Items))
 	}
 }
 
