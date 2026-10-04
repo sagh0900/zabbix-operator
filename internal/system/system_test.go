@@ -155,7 +155,7 @@ func TestPodSettingsApplied(t *testing.T) {
 	if p.Spec.Volumes[0].ConfigMap.Name != "zabbix-web-saml" || p.Spec.Containers[0].VolumeMounts[0].SubPath != "zabbix.conf.php" {
 		t.Error("SAML mount not applied")
 	}
-	if p.Labels["team"] != "monitoring" || p.Labels["app.kubernetes.io/name"] != "zabbix-web" {
+	if p.Labels["team"] != "monitoring" || p.Labels["app.kubernetes.io/name"] != "zabbix" || p.Labels["app.kubernetes.io/component"] != "web" {
 		t.Errorf("labels %v", p.Labels)
 	}
 	if p.Spec.Affinity == nil || p.Spec.Affinity.PodAntiAffinity == nil {
@@ -335,7 +335,7 @@ func TestProxyPods(t *testing.T) {
 	if p.Spec.Containers[0].Image != "zabbix/zabbix-proxy-sqlite3:ubuntu-7.0.25" {
 		t.Errorf("image %q", p.Spec.Containers[0].Image)
 	}
-	if p.Spec.Subdomain != "dc1" || p.Labels["app.kubernetes.io/name"] != "zabbix-proxy-dc1" {
+	if p.Spec.Subdomain != "dc1" || p.Labels["app.kubernetes.io/component"] != "proxy" {
 		t.Errorf("subdomain %q labels %v", p.Spec.Subdomain, p.Labels)
 	}
 	if p.Spec.Volumes[0].EmptyDir == nil || p.Spec.Containers[0].VolumeMounts[0].MountPath != "/var/lib/zabbix/db_data" ||
@@ -407,5 +407,24 @@ func TestAgentDaemonSet(t *testing.T) {
 	}
 	if ds.Spec.Selector.MatchLabels["zabbix.io/component"] != Agent || ds.Spec.Template.Annotations[AnnotationConfigHash] != "h1" {
 		t.Errorf("selector %v annotations %v", ds.Spec.Selector, ds.Spec.Template.Annotations)
+	}
+}
+
+// Existing Zabbix deployments commonly select their pods with
+// app.kubernetes.io/name=zabbix-<component>. While such a deployment and a system run side
+// by side during a migration, those selectors must never match the system's pods.
+func TestPodsDoNotMatchCommonDeploymentSelectors(t *testing.T) {
+	in := fixture()
+	proxy := &zabbixv1alpha1.ProxySpec{Name: "dc1"}
+	pods := []*corev1.Pod{
+		ServerPod(in, "zabbix-server-0", false), ServerPod(in, "zabbix-server-init-0", true),
+		WebPod(in, "zabbix-web-0"), WebServicePod(in, "zabbix-webservice-0"), ProxyPod(in, proxy, "dc1-0"),
+	}
+	for _, p := range pods {
+		for _, c := range []string{"server", "web", "webservice", "web-service", "proxy", "proxy-dc1", "server-pgsql", "web-nginx-pgsql"} {
+			if p.Labels["app.kubernetes.io/name"] == "zabbix-"+c || p.Labels["app"] == "zabbix-"+c {
+				t.Errorf("pod %s matches the selector name=zabbix-%s: %v", p.Name, c, p.Labels)
+			}
+		}
 	}
 }

@@ -22,6 +22,7 @@ package system
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -116,13 +117,23 @@ func ServiceName(sys *zabbixv1alpha1.ZabbixSystem, component string) string {
 	return sys.Name + "-" + component
 }
 
-// labels are the labels every object of a component carries in addition to the podset
-// selector labels.
+// appName is the application name in the recommended labels.
+const appName = "zabbix"
+
+// labels are the Kubernetes recommended labels every object of a component carries in
+// addition to the podset selector labels. The name is the application, "zabbix", and the
+// component a generic role (every proxy is "proxy"), so Services of an existing Zabbix
+// deployment that select on app.kubernetes.io/name=zabbix-server and the like never match
+// the operator's pods while both run side by side.
 func labels(sys *zabbixv1alpha1.ZabbixSystem, component string) map[string]string {
+	if strings.HasPrefix(component, ProxyComponentPrefix) {
+		component = "proxy"
+	}
 	return map[string]string{
-		"app.kubernetes.io/name":     "zabbix-" + component,
-		"app.kubernetes.io/instance": sys.Name,
-		"app.kubernetes.io/part-of":  "zabbix",
+		"app.kubernetes.io/name":      appName,
+		"app.kubernetes.io/component": component,
+		"app.kubernetes.io/instance":  sys.Name,
+		"app.kubernetes.io/part-of":   appName,
 	}
 }
 
