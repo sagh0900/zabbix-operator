@@ -203,7 +203,7 @@ func TestReferencedObjects(t *testing.T) {
 func TestApplyService(t *testing.T) {
 	in := fixture()
 	spec := Services(in.System)[0]
-	spec.Settings = zabbixv1alpha1.ServiceSettings{Type: corev1.ServiceTypeLoadBalancer, LoadBalancerIP: "10.11.165.130",
+	spec.Settings = zabbixv1alpha1.ServiceSettings{Type: corev1.ServiceTypeLoadBalancer, LoadBalancerIP: "10.0.0.10",
 		Annotations: map[string]string{"a": "1", "b": "2"}}
 	svc := &corev1.Service{}
 	svc.Annotations = map[string]string{"metallb.universe.tf/ip-allocated-from-pool": "first-pool"} // set by MetalLB

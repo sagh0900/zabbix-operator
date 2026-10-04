@@ -603,7 +603,7 @@ func TestSystem_ServiceSettingsAndIngress(t *testing.T) {
 	ns := newNamespace(t)
 	ctx := context.Background()
 	installed(t, ns, "7.0.25", func(s *zabbixv1alpha1.ZabbixSystem) {
-		s.Spec.Server.Service = zabbixv1alpha1.ServiceSettings{Type: corev1.ServiceTypeLoadBalancer, LoadBalancerIP: "10.11.165.130",
+		s.Spec.Server.Service = zabbixv1alpha1.ServiceSettings{Type: corev1.ServiceTypeLoadBalancer, LoadBalancerIP: "10.0.0.10",
 			Annotations: map[string]string{"metallb.universe.tf/allow-shared-ip": "zabbix"}}
 		s.Spec.Web.Ingress = zabbixv1alpha1.IngressSettings{Enabled: true, ClassName: ptr.To("traefik"),
 			Hosts: []zabbixv1alpha1.IngressHost{{Host: "zabbix.example.com"}}}
@@ -612,7 +612,7 @@ func TestSystem_ServiceSettingsAndIngress(t *testing.T) {
 	if err := k8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: "zabbix-server"}, svc); err != nil {
 		t.Fatal(err)
 	}
-	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer || svc.Spec.LoadBalancerIP != "10.11.165.130" || //nolint:staticcheck // the field under test
+	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer || svc.Spec.LoadBalancerIP != "10.0.0.10" || //nolint:staticcheck // the field under test
 		svc.Annotations["metallb.universe.tf/allow-shared-ip"] != "zabbix" {
 		t.Errorf("server Service %+v %v", svc.Spec, svc.Annotations)
 	}
