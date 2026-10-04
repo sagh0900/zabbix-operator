@@ -21,9 +21,7 @@ package zabbix
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
-	"strings"
 )
 
 // Version is a Zabbix release such as 7.0.25 or 8.0.0rc1.
@@ -106,45 +104,6 @@ func (v Version) SchemaLevel() int {
 // SchemaLevelOf converts the dbversion.mandatory value of a Zabbix database to a
 // schema level: 7000000 → 700, 7040000 → 704, 7050195 → 705, 8000000 → 800.
 func SchemaLevelOf(mandatory int) int { return mandatory / 10000 }
-
-// supportedLines are the release lines this operator runs, with the minimum
-// PostgreSQL major version each requires. Every line runs, and every newer line can be
-// upgraded to, through a schema upgrade.
-var supportedLines = map[string]int{
-	"7.0": 13,
-	"7.2": 13,
-	"7.4": 13,
-	"8.0": 15,
-}
-
-// SupportedLines lists the release lines this operator runs, oldest first.
-func SupportedLines() []string {
-	lines := make([]string, 0, len(supportedLines))
-	for l := range supportedLines {
-		lines = append(lines, l)
-	}
-	sort.Slice(lines, func(i, j int) bool {
-		a, _ := ParseVersion(lines[i] + ".0")
-		b, _ := ParseVersion(lines[j] + ".0")
-		return a.SchemaLevel() < b.SchemaLevel()
-	})
-	return lines
-}
-
-// UnsupportedMessage explains that v's release line is not supported.
-func UnsupportedMessage(v Version) string {
-	return fmt.Sprintf("Zabbix %s is not supported by this operator version (supported lines: %s)",
-		v.Line(), strings.Join(SupportedLines(), ", "))
-}
-
-// Supported reports whether the operator runs this version's release line.
-func (v Version) Supported() bool {
-	_, ok := supportedLines[v.Line()]
-	return ok
-}
-
-// MinPostgres is the minimum PostgreSQL major version the release line requires.
-func (v Version) MinPostgres() int { return supportedLines[v.Line()] }
 
 // Change classifies moving a database to a target version.
 type Change string

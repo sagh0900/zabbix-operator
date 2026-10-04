@@ -146,3 +146,15 @@ keep working; new or changed proxies are not registered until it succeeds.
 4. A connection error: the frontend is not ready, or `proxyRegistration.url` is wrong.
 5. Deleting a proxy that still monitors hosts fails; move those hosts first.
 
+## ZabbixOperatorCompatibilityConfigInvalid
+
+The operator cannot read or parse its compatibility ConfigMap
+(`zabbix-operator-compatibility` in the operator's namespace) and uses only the built-in
+release lines. Systems on a line that only the ConfigMap adds are reported as `Blocked`
+(`UnsupportedVersion`); their running pods are not touched.
+
+1. `kubectl -n zabbix-operator logs deployment/zabbix-operator-controller-manager` names the
+   error.
+2. Fix the `compatibility.yaml` key (see [Upgrades](upgrades.md#adding-a-release-line));
+   the operator picks it up within 30 seconds.
+

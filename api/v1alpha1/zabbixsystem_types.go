@@ -28,6 +28,9 @@ const (
 	SystemUpgrading      = "Upgrading"
 	SystemUpgradeBlocked = "UpgradeBlocked"
 	SystemConflict       = "Conflict"
+	// SystemUnverifiedVersion is True while the desired or running release line comes from
+	// the operator's compatibility ConfigMap instead of the lines validated with it.
+	SystemUnverifiedVersion = "UnverifiedVersion"
 	// SystemProxiesRegistered is True when every listed proxy is registered in Zabbix.
 	SystemProxiesRegistered = "ProxiesRegistered"
 )

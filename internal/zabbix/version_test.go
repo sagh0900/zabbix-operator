@@ -91,31 +91,6 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-func TestUnsupportedMessage(t *testing.T) {
-	v, _ := ParseVersion("9.0.0")
-	want := "Zabbix 9.0 is not supported by this operator version (supported lines: 7.0, 7.2, 7.4, 8.0)"
-	if got := UnsupportedMessage(v); got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestPostgresRequirements(t *testing.T) {
-	v := func(s string) Version { r, _ := ParseVersion(s); return r }
-	for _, s := range []string{"7.0.1", "7.2.15", "7.4.7", "8.0.0rc1"} {
-		if !v(s).Supported() {
-			t.Errorf("%s must be supported", s)
-		}
-	}
-	for _, s := range []string{"6.0.40", "7.1.0", "7.3.0", "9.0.0"} {
-		if v(s).Supported() {
-			t.Errorf("%s must not be supported", s)
-		}
-	}
-	if v("7.0.25").MinPostgres() != 13 || v("7.4.7").MinPostgres() != 13 || v("8.0.0rc1").MinPostgres() != 15 {
-		t.Errorf("minimums: 7.0 %d, 8.0 %d", v("7.0.25").MinPostgres(), v("8.0.0rc1").MinPostgres())
-	}
-}
-
 func TestCompare(t *testing.T) {
 	ordered := []string{"7.0.1", "7.0.25", "7.0.30", "7.2.15", "7.4.0rc1", "7.4.0", "7.4.7", "8.0.0alpha2", "8.0.0beta1", "8.0.0rc1", "8.0.0rc2", "8.0.0", "8.0.1"}
 	for i := range ordered {

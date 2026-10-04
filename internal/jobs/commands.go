@@ -45,7 +45,7 @@ const (
 // PostgreSQL version the target line supports, and holds a schema the target can run on
 // or upgrade. It also counts active HA nodes, so callers can tell whether servers still
 // run against the database.
-func Precheck(ctx context.Context, conn *pgx.Conn, target zabbix.Version) Result {
+func Precheck(ctx context.Context, conn *pgx.Conn, target zabbix.Version, line zabbix.Line) Result {
 	var f facts
 	if err := conn.QueryRow(ctx, "SELECT current_setting('server_version_num')::int, pg_is_in_recovery()").
 		Scan(&f.versionNum, &f.inRecovery); err != nil {
@@ -62,7 +62,7 @@ func Precheck(ctx context.Context, conn *pgx.Conn, target zabbix.Version) Result
 			return Result{Command: CommandPrecheck, Reason: "SchemaUnreadable", Message: fmt.Sprintf("reading ha_node: %v", err)}
 		}
 	}
-	return decide(f, target)
+	return decide(f, target, line)
 }
 
 // facts are what precheck reads from the database.
@@ -73,23 +73,25 @@ type facts struct {
 	activeNodes int
 }
 
-// decide turns facts into a precheck result. Checks run in order of what a person must fix
-// first: an unsupported target, a replica connection, an old PostgreSQL, a downgrade.
-func decide(f facts, target zabbix.Version) Result {
+// decide turns facts into a precheck result for target, whose release line has the
+// PostgreSQL limits of line. The operator decides whether the line is supported before it
+// runs the Job. Checks run in order of what a person must fix first: a replica connection,
+// an unsuitable PostgreSQL version, a downgrade.
+func decide(f facts, target zabbix.Version, line zabbix.Line) Result {
 	r := Result{Command: CommandPrecheck, PostgresMajor: f.versionNum / 10000, ActiveNodes: f.activeNodes}
 	fail := func(reason, format string, args ...any) Result {
 		r.Reason, r.Message = reason, fmt.Sprintf(format, args...)
 		return r
 	}
-	if !target.Supported() {
-		return fail("UnsupportedVersion", "%s", zabbix.UnsupportedMessage(target))
-	}
 	if f.inRecovery {
 		return fail("NotPrimary", "the database is in recovery; connect to the primary")
 	}
-	if r.PostgresMajor < target.MinPostgres() {
-		return fail("PostgreSQLTooOld", "PostgreSQL %d is too old for Zabbix %s (needs %d or newer)",
-			r.PostgresMajor, target.Line(), target.MinPostgres())
+	if problem := line.PostgresProblem(r.PostgresMajor); problem != "" {
+		reason := "PostgreSQLTooOld"
+		if r.PostgresMajor > line.MinPostgres {
+			reason = "PostgreSQLTooNew"
+		}
+		return fail(reason, "%s", problem)
 	}
 	if f.mandatory > 0 {
 		r.SchemaLevel = zabbix.SchemaLevelOf(f.mandatory)

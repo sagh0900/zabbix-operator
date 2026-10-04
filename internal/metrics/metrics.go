@@ -161,6 +161,16 @@ var (
 	}, []string{labelNamespace, labelSystem, "result"})
 )
 
+// CompatibilityConfigValid is 0 while the compatibility ConfigMap cannot be read or
+// parsed and only the built-in release lines apply.
+var CompatibilityConfigValid = prometheus.NewGauge(prometheus.GaugeOpts{
+	Namespace: namespace, Name: "compatibility_config_valid",
+	Help: "0 while the compatibility ConfigMap is invalid and only the built-in release lines apply.",
+})
+
+// otherCollectors are every metric not labelled by a ZabbixSystem.
+var otherCollectors = []prometheus.Collector{DatabaseReady, DatabaseCondition, DatabasePrimaryChanges, CompatibilityConfigValid}
+
 // systemCollectors are every metric labelled by a ZabbixSystem.
 var systemCollectors = []interface {
 	prometheus.Collector
@@ -172,7 +182,8 @@ var systemCollectors = []interface {
 }
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(DatabaseReady, DatabaseCondition, DatabasePrimaryChanges)
+	ctrlmetrics.Registry.MustRegister(otherCollectors...)
+	CompatibilityConfigValid.Set(1)
 	for _, c := range systemCollectors {
 		ctrlmetrics.Registry.MustRegister(c)
 	}

@@ -45,6 +45,12 @@ import (
 // k8s is the client for envtest-based tests; nil when envtest assets are unavailable.
 var k8s client.Client
 
+// The operator's namespace and compatibility ConfigMap in tests; read on every pass.
+const (
+	testOperatorNamespace      = "zabbix-operator"
+	testCompatibilityConfigMap = "zabbix-operator-compatibility"
+)
+
 // testOperatorImage is the image database Jobs run in tests.
 const testOperatorImage = "zabbix-operator:test"
 
@@ -114,6 +120,9 @@ func TestMain(m *testing.M) {
 			return ok && v.(bool)
 		},
 		ZabbixAPI: fakeZabbixAPI,
+		Compatibility: &CompatibilitySource{
+			Reader: mgr.GetAPIReader(), Namespace: testOperatorNamespace, Name: testCompatibilityConfigMap,
+		},
 	}).SetupWithManager(mgr); err != nil {
 		fmt.Fprintln(os.Stderr, "setting up system controller:", err)
 		os.Exit(1)

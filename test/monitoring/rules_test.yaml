@@ -336,3 +336,21 @@ tests:
               summary: Zabbix proxy registration failing
               description: Proxy registration of zabbix/zabbix has failed for 15 minutes; new or changed proxies are not registered in Zabbix.
               runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixproxyregistrationfailing
+
+  - name: compatibility ConfigMap invalid
+    interval: 1m
+    input_series:
+      - series: 'zabbix_operator_compatibility_config_valid{job="zabbix-operator-metrics"}'
+        values: '1x3 0x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ZabbixOperatorCompatibilityConfigInvalid
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ZabbixOperatorCompatibilityConfigInvalid
+        exp_alerts:
+          - exp_labels: { severity: warning, job: zabbix-operator-metrics }
+            exp_annotations:
+              summary: Zabbix operator compatibility ConfigMap is invalid
+              description: The compatibility ConfigMap has been unreadable or invalid for 10 minutes; only the built-in Zabbix release lines apply.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatorcompatibilityconfiginvalid

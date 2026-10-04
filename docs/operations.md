@@ -21,7 +21,8 @@ kubectl -n zabbix get pods -L zabbix.io/component,zabbix.io/role
 | `Suspended` | Stopped on purpose with `spec.suspend` |
 
 Conditions: `DatabaseReady`, `ServerActive`, `WebReady`, `Upgrading`, `UpgradeBlocked`,
-`Conflict` and, with proxy registration, `ProxiesRegistered`. Events record each new active
+`Conflict`, `UnverifiedVersion` (the release line comes from the compatibility ConfigMap) and,
+with proxy registration, `ProxiesRegistered`. Events record each new active
 server (`ActiveServer`), the loss of the active node (`ActiveServerLost`), upgrades, blocks
 and suspends.
 
