@@ -67,8 +67,14 @@ func (r *SystemReconciler) majorGates(ctx context.Context, sys *zabbixv1alpha1.Z
 	if w := sys.Spec.Upgrade.RequireBackupWithin; w != nil {
 		window = w.Duration
 	}
+	// A line that was not validated with this operator version always needs a backup.
+	line, _ := r.Compatibility.Get(ctx).Lookup(target)
+	unverified := !line.Verified
 	if window <= 0 {
-		return "", "", nil
+		if !unverified {
+			return "", "", nil
+		}
+		window = defaultBackupWindow
 	}
 	latest, err := r.latestBackup(ctx, sys.Namespace, db.Spec.ClusterRef.Name)
 	if err != nil {
@@ -78,6 +84,11 @@ func (r *SystemReconciler) majorGates(ctx context.Context, sys *zabbixv1alpha1.Z
 		last := "none"
 		if !latest.IsZero() {
 			last = latest.UTC().Format(time.RFC3339)
+		}
+		if unverified {
+			return "BackupRequired", fmt.Sprintf(
+				"Zabbix %s is not validated with this operator version; upgrading to it needs a completed CNPG Backup of %s within %s (latest: %s)",
+				target.Line(), db.Spec.ClusterRef.Name, window, last), nil
 		}
 		return "BackupRequired", fmt.Sprintf(
 			"No completed CNPG Backup of %s within %s (latest: %s); take one, or set spec.upgrade.requireBackupWithin: 0s to skip this check",
@@ -215,7 +226,7 @@ func (r *SystemReconciler) majorStep(ctx context.Context, sys *zabbixv1alpha1.Za
 			return 0, err
 		}
 		verify := jobs.Spec{
-			Owner: sys, System: sys.Name, Command: jobs.CommandPrecheck, Args: []string{"--target-version=" + to},
+			Owner: sys, System: sys.Name, Command: jobs.CommandPrecheck, Args: r.precheckArgs(ctx, target),
 			Image: r.OperatorImage, Database: db, Host: db.DirectHostOrDefault(), RunID: "verify-" + to,
 		}
 		res, err := r.runJob(ctx, verify)

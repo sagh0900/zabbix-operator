@@ -150,9 +150,20 @@ func version(t *testing.T, s string) zabbix.Version {
 	return v
 }
 
+// precheck runs Precheck with the built-in limits of target's line.
+func precheck(t *testing.T, d *testDB, target string) Result {
+	t.Helper()
+	v := version(t, target)
+	line, ok := zabbix.Builtin().Lookup(v)
+	if !ok {
+		t.Fatalf("line of %s not built in", target)
+	}
+	return Precheck(context.Background(), d.conn, v, line)
+}
+
 func TestDBPrecheckFreshInstall(t *testing.T) {
 	d := newTestDB(t)
-	r := Precheck(context.Background(), d.conn, version(t, "7.0.1"))
+	r := precheck(t, d, "7.0.1")
 	if !r.OK || r.Change != string(zabbix.FreshInstall) || r.PostgresMajor != d.pg {
 		t.Fatalf("result %+v", r)
 	}
@@ -163,7 +174,7 @@ func TestDBPrecheckSameSchemaCountsActiveNodes(t *testing.T) {
 	d.schema(7000000)
 	d.node("zabbix-server-0", haNodeActive, 1)
 	d.node("zabbix-server-1", 0, 1) // standby
-	r := Precheck(context.Background(), d.conn, version(t, "7.0.25"))
+	r := precheck(t, d, "7.0.25")
 	if !r.OK || r.Change != string(zabbix.SameSchema) || r.SchemaLevel != 700 || r.ActiveNodes != 1 {
 		t.Fatalf("result %+v", r)
 	}
@@ -174,7 +185,7 @@ func TestDBPrecheckSameSchemaCountsActiveNodes(t *testing.T) {
 func TestDBPrecheckMajorUpgradeHonoursPostgresMinimum(t *testing.T) {
 	d := newTestDB(t)
 	d.schema(7000000)
-	r := Precheck(context.Background(), d.conn, version(t, "8.0.0rc1"))
+	r := precheck(t, d, "8.0.0rc1")
 	if d.pg < 15 {
 		want := "PostgreSQL " + strconv.Itoa(d.pg) + " is too old for Zabbix 8.0 (needs 15 or newer)"
 		if r.OK || r.Reason != "PostgreSQLTooOld" || r.Message != want {
@@ -190,17 +201,20 @@ func TestDBPrecheckMajorUpgradeHonoursPostgresMinimum(t *testing.T) {
 func TestDBPrecheckRefusesDowngrade(t *testing.T) {
 	d := newTestDB(t)
 	d.schema(7050195) // an 8.0.0rc1 database
-	r := Precheck(context.Background(), d.conn, version(t, "7.0.25"))
+	r := precheck(t, d, "7.0.25")
 	if r.OK || r.Reason != "Downgrade" || !strings.Contains(r.Message, "7050195") {
 		t.Fatalf("result %+v", r)
 	}
 }
 
-func TestDBPrecheckUnsupportedLine(t *testing.T) {
+// A line's PostgreSQL maximum is enforced as well as its minimum.
+func TestDBPrecheckHonoursPostgresMaximum(t *testing.T) {
 	d := newTestDB(t)
-	r := Precheck(context.Background(), d.conn, version(t, "9.0.0"))
-	if r.OK || r.Reason != "UnsupportedVersion" || !strings.Contains(r.Message, "not supported by this operator version") {
-		t.Fatalf("result %+v", r)
+	line := zabbix.Line{Line: "7.0", MinPostgres: 13, MaxPostgres: d.pg - 1}
+	r := Precheck(context.Background(), d.conn, version(t, "7.0.25"), line)
+	want := "PostgreSQL " + strconv.Itoa(d.pg) + " is too new for Zabbix 7.0 (supports up to " + strconv.Itoa(d.pg-1) + ")"
+	if r.OK || r.Reason != "PostgreSQLTooNew" || r.Message != want {
+		t.Fatalf("result %+v, want PostgreSQLTooNew %q", r, want)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -55,11 +56,12 @@ func main() {
 	}
 
 	var (
-		metricsAddr    string
-		metricsSecure  bool
-		probeAddr      string
-		leaderElection bool
-		showVersion    bool
+		metricsAddr            string
+		metricsSecure          bool
+		probeAddr              string
+		leaderElection         bool
+		showVersion            bool
+		compatibilityConfigMap string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "Address the metrics endpoint binds to; 0 disables it.")
 	flag.BoolVar(&metricsSecure, "metrics-secure", true,
@@ -67,6 +69,8 @@ func main() {
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Address the health probe endpoint binds to.")
 	flag.BoolVar(&leaderElection, "leader-elect", true, "Enable leader election so only one manager is active.")
 	flag.BoolVar(&showVersion, "version", false, "Print the version and exit.")
+	flag.StringVar(&compatibilityConfigMap, "compatibility-configmap", "zabbix-operator-compatibility",
+		"ConfigMap in the operator's namespace (POD_NAMESPACE) that adds Zabbix release lines; empty disables it.")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -117,6 +121,10 @@ func main() {
 		Scheme:        mgr.GetScheme(),
 		Recorder:      mgr.GetEventRecorder("zabbix-operator"),
 		OperatorImage: operatorImage,
+		Compatibility: &controller.CompatibilitySource{
+			Reader: mgr.GetAPIReader(), Namespace: os.Getenv("POD_NAMESPACE"),
+			Name: compatibilityConfigMap, TTL: 30 * time.Second,
+		},
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to set up controller", "controller", "ZabbixSystem")
 		os.Exit(1)

@@ -91,6 +91,8 @@ type SystemReconciler struct {
 	countedJobs sync.Map
 	// Now returns the current time; tests replace it.
 	Now func() time.Time
+	// Compatibility provides the supported release lines; nil means the built-in lines.
+	Compatibility *CompatibilitySource
 	// ZabbixAPI connects to the Zabbix API; nil means the HTTP client. Tests replace it.
 	ZabbixAPI func(url, token string) registration.API
 
@@ -144,6 +146,9 @@ type observation struct {
 	serverPods []string     // names of live server pods
 	step       zabbixv1alpha1.UpgradeStep
 	target     string // UpgradeTarget to record
+	// unverified names the release lines in use that come from the compatibility
+	// ConfigMap; empty when every line in use was validated with this operator version.
+	unverified string
 	// registration is the proxy registration outcome; nil leaves the status unchanged.
 	registration *registrationResult
 }
@@ -160,6 +165,9 @@ func (r *SystemReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	obs := &observation{running: sys.Status.RunningVersion, webEnabled: sys.Spec.Web.IsEnabled(), lastGC: sys.Status.LastHANodeGCTime}
+	if target, err := zabbix.ParseVersion(sys.Spec.Version); err == nil {
+		obs.unverified = unverifiedLines(r.Compatibility.Get(ctx), r.Compatibility, target, sys.Status.RunningVersion)
+	}
 	requeue, err := r.reconcileSystem(ctx, sys, obs)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -211,8 +219,9 @@ func (r *SystemReconciler) reconcileSystem(ctx context.Context, sys *zabbixv1alp
 		obs.phase, obs.reason, obs.blocked = zabbixv1alpha1.PhaseBlocked, err.Error(), "InvalidVersion"
 		return 0, nil
 	}
-	if !target.Supported() {
-		obs.phase, obs.reason, obs.blocked = zabbixv1alpha1.PhaseBlocked, zabbix.UnsupportedMessage(target), "UnsupportedVersion"
+	compat := r.Compatibility.Get(ctx)
+	if _, ok := compat.Lookup(target); !ok {
+		obs.phase, obs.reason, obs.blocked = zabbixv1alpha1.PhaseBlocked, compat.UnsupportedMessage(target), "UnsupportedVersion"
 		// Existing pods keep running unchanged.
 		return 0, r.observeOnly(ctx, sys, db, obs)
 	}
@@ -584,9 +593,17 @@ func (r *SystemReconciler) precheck(ctx context.Context, sys *zabbixv1alpha1.Zab
 	target zabbix.Version) (*jobs.Result, error) {
 	return r.runJob(ctx, jobs.Spec{
 		Owner: sys, System: sys.Name, Command: jobs.CommandPrecheck,
-		Args:  []string{"--target-version=" + target.String()},
+		Args:  r.precheckArgs(ctx, target),
 		Image: r.OperatorImage, Database: db, Host: db.DirectHostOrDefault(),
 	})
+}
+
+// precheckArgs are the precheck Job's arguments for target, including the PostgreSQL
+// limits of its release line.
+func (r *SystemReconciler) precheckArgs(ctx context.Context, target zabbix.Version) []string {
+	line, _ := r.Compatibility.Get(ctx).Lookup(target)
+	return []string{"--target-version=" + target.String(),
+		fmt.Sprintf("--min-postgres=%d", line.MinPostgres), fmt.Sprintf("--max-postgres=%d", line.MaxPostgres)}
 }
 
 // input builds the builder input, hashing the versions of every referenced Secret and
@@ -712,6 +729,9 @@ func (r *SystemReconciler) updateStatus(ctx context.Context, sys *zabbixv1alpha1
 	if obs.phase == zabbixv1alpha1.PhaseBlocked && st.Phase != zabbixv1alpha1.PhaseBlocked {
 		r.event(sys, corev1.EventTypeWarning, obs.blocked, obs.reason)
 	}
+	if obs.unverified != "" && !meta.IsStatusConditionTrue(st.Conditions, zabbixv1alpha1.SystemUnverifiedVersion) {
+		r.event(sys, corev1.EventTypeWarning, zabbixv1alpha1.SystemUnverifiedVersion, obs.unverified)
+	}
 	st.Phase, st.PhaseReason, st.RunningVersion = obs.phase, obs.reason, obs.running
 	st.LastHANodeGCTime = obs.lastGC
 	st.UpgradeStep, st.UpgradeTarget = obs.step, obs.target
@@ -788,6 +808,11 @@ func setConditions(sys *zabbixv1alpha1.ZabbixSystem, st *zabbixv1alpha1.ZabbixSy
 		set(zabbixv1alpha1.SystemUpgrading, true, "Upgrading", fmt.Sprintf("from %s to %s", obs.running, sys.Spec.Version))
 	} else {
 		set(zabbixv1alpha1.SystemUpgrading, false, "UpToDate", "")
+	}
+	if obs.unverified != "" {
+		set(zabbixv1alpha1.SystemUnverifiedVersion, true, "NotValidated", obs.unverified)
+	} else {
+		set(zabbixv1alpha1.SystemUnverifiedVersion, false, "Validated", "")
 	}
 	if len(obs.conflicts) > 0 {
 		set(zabbixv1alpha1.SystemConflict, true, "Conflict", strings.Join(obs.conflicts, "; "))

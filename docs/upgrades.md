@@ -69,9 +69,10 @@ and the upgrade starts by itself once the cause is gone:
 | `PostgreSQLTooOld` | PostgreSQL is older than the target line needs | Upgrade PostgreSQL through CNPG |
 | `NotPrimary` | `directHost` does not reach the primary | Point `directHost` at `<cluster>-rw` |
 | `MajorUpgradeNotApproved` | `approveMajor` does not name the target line | Set `spec.upgrade.approveMajor` |
+| `PostgreSQLTooNew` | PostgreSQL is newer than the target line supports | Use a supported PostgreSQL version, or extend the line's range (see [Adding a release line](#adding-a-release-line)) |
 | `ReplicasNotInSync` | Not every PostgreSQL instance is healthy | Wait, or repair the CNPG cluster |
 | `BackupRequired` | No completed Backup within the window | Take a backup, or set `requireBackupWithin: 0s` |
-| `UnsupportedVersion` | The operator does not support the target line | Use a supported version |
+| `UnsupportedVersion` | The target line is neither built in nor in the compatibility ConfigMap | Use a supported version, or [add the line](#adding-a-release-line) |
 | `Downgrade` | The target is older than the running version or the schema | Set a version at least as new |
 
 Then `status.upgradeStep` shows the progress:
@@ -131,6 +132,86 @@ spec:
 
 To pull every image from a mirror, set `spec.imageRepository` (for example
 `registry.example.com/zabbix`) instead.
+
+## Supported versions
+
+The operator runs the release lines built into it, each with the PostgreSQL range of its
+official requirements:
+
+| Line | PostgreSQL |
+|---|---|
+| 7.0 | 13 to 18 |
+| 7.2 | 13 or newer |
+| 7.4 | 13 to 18 |
+| 8.0 | 15 to 18 |
+
+These versions and paths have been run end to end on a live cluster (CloudNativePG 1.30)
+with this operator version:
+
+| Version or path | PostgreSQL | Result |
+|---|---|---|
+| Install 7.0.1 | 14 | Running in 44 s |
+| 7.0.1 → 7.0.25 (patch) | 16 | 32 s, servers standby first, no restarts |
+| Install 7.0.25 | 17 | Running in 31 s, TLS `verify-full` |
+| 7.0.25 → 8.0.0rc1 (line upgrade) | 17 | 28 s, server Service empty for about 13 s |
+| Install 7.4.7 | 16 | Running in 70 s |
+| 7.4.7 → 8.0.0rc1 (line upgrade) | 16 | 26 s, no restarts |
+| PostgreSQL 14 → 16 → 17 in place under running Zabbix 7.0 | 14 to 17 | Zabbix reconnects, never stopped |
+
+Other patch releases of these lines work the same way: they share the line's schema.
+
+### Adding a release line
+
+A new Zabbix line can be enabled without a new operator version, through the optional
+ConfigMap `zabbix-operator-compatibility` in the operator's namespace. Its lines are
+added to the built-in ones; an entry for a built-in line replaces its PostgreSQL range.
+
+1. Check the version against what Zabbix publishes. From a clone of this repository:
+
+   ```sh
+   hack/zabbix-line-check.sh 8.2.0
+   ```
+
+   The script confirms that every official image is published, reads the schema version
+   the server ships, takes the PostgreSQL range from the official requirements page, and
+   prints the ConfigMap entry. It changes nothing.
+
+2. Read the line's upgrade notes in the Zabbix documentation for changes in images,
+   configuration variables, HA behaviour and the API.
+
+3. Create the ConfigMap:
+
+   ```yaml
+   apiVersion: v1
+   kind: ConfigMap
+   metadata:
+     name: zabbix-operator-compatibility
+     namespace: zabbix-operator
+   data:
+     compatibility.yaml: |
+       lines:
+         - line: "8.2"
+           minPostgres: 15
+           maxPostgres: 18   # optional
+   ```
+
+   The operator reads it within 30 seconds. An unreadable or invalid ConfigMap is
+   ignored (only the built-in lines apply) and fires `ZabbixOperatorCompatibilityConfigInvalid`.
+
+**A line from the ConfigMap has not been validated with this operator version.** A new
+Zabbix line can change its images, its configuration variables, its HA behaviour or its
+API, and an upgrade to it rewrites the database schema, which only a restore undoes.
+Therefore:
+
+- Every system whose desired or running line comes from the ConfigMap reports
+  `UnverifiedVersion=True` and a Warning event.
+- An upgrade to such a line always waits for a completed CNPG `Backup` (within
+  `requireBackupWithin`, or 24 hours when that check is turned off).
+- Rehearse the upgrade on a restored copy of the database before upgrading a system that
+  matters, and check the frontend, proxies, agents and failover afterwards.
+
+A later operator release that validates the line builds it in; the ConfigMap entry can
+then be removed.
 
 ## PostgreSQL upgrades
 

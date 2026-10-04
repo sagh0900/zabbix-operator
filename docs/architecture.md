@@ -22,6 +22,14 @@ supported line to any newer one. A ZabbixSystem asking for another line is accep
 API and reported as `Blocked` ("Zabbix 9.0 is not supported by this operator version"),
 and nothing is deployed for it.
 
+The supported lines and the PostgreSQL range of each are data, not code: the validated
+lines are built in, and an optional ConfigMap `zabbix-operator-compatibility` in the
+operator's namespace (key `compatibility.yaml`, flag `--compatibility-configmap`) adds lines
+or changes their range without a new operator version. Lines from the ConfigMap are
+reported as `UnverifiedVersion`, and an upgrade to one always requires a recent CNPG
+backup. The `precheck` Job receives the target line's PostgreSQL range as arguments. See
+[Upgrades](upgrades.md#supported-versions).
+
 ## Custom resources
 
 There are exactly two CRDs, both in `zabbix.io/v1alpha1`.
@@ -182,7 +190,8 @@ Status reports `phase` (`Installing`, `Running`, `Upgrading`, `Degraded`, `Block
 one-line `phaseReason`,
 `runningVersion`, `activeServer` (pod name and IP of the active HA node), per-component
 ready counts, `registeredProxies`, and conditions `DatabaseReady`, `ServerActive`, `WebReady`,
-`Upgrading`, `UpgradeBlocked`, `Conflict` and, with proxy registration, `ProxiesRegistered`.
+`Upgrading`, `UpgradeBlocked`, `Conflict`, `UnverifiedVersion` and, with proxy registration,
+`ProxiesRegistered`.
 
 `kubectl get zsys` shows the phase and its reason:
 
@@ -478,7 +487,7 @@ make a live HA node look stale.
 
 | Job | When | What it does |
 |---|---|---|
-| `precheck` | Before installing and before any upgrade | Connects through `directHost`; reports the PostgreSQL version, the schema level and the number of active HA nodes; fails with a reason when the target line is unsupported (`UnsupportedVersion`), the connection is not to the primary (`NotPrimary`), PostgreSQL is too old for the target line (`PostgreSQLTooOld`) or the schema is newer than the target (`Downgrade`) |
+| `precheck` | Before installing and before any upgrade | Connects through `directHost`; reports the PostgreSQL version, the schema level and the number of active HA nodes; fails with a reason when the connection is not to the primary (`NotPrimary`), PostgreSQL is outside the target line's range (`PostgreSQLTooOld`, `PostgreSQLTooNew`) or the schema is newer than the target (`Downgrade`). An unsupported line is refused by the operator before the Job runs |
 | `ha-reset` | Before the standalone step of a major upgrade | Deletes all `ha_node` rows; refuses while any node has heartbeated within the last 30 seconds, which means a server is still running somewhere |
 | `ha-gc` | Every 5 minutes while `Running` | Deletes `ha_node` rows whose name is not a live server Pod and whose last access is older than a safety window; reports how many rows were removed |
 
@@ -514,7 +523,7 @@ restore. Before anything stops, the operator checks, in this order, and reports 
 problem as `Blocked` with a message and a Warning event, changing nothing:
 
 1. the `precheck` Job: the target line is supported, the connection reaches the primary,
-   PostgreSQL is new enough for the target line (8.0 needs 15 or newer), and the schema is
+   PostgreSQL is within the target line's range (8.0 needs 15 to 18), and the schema is
    not newer than the target;
 2. approval: when the release line changes, `spec.upgrade.approveMajor` must equal the target
    line, so each major upgrade is approved explicitly;
@@ -620,6 +629,7 @@ All series carry `namespace` and the owning resource name (`database` or `system
 | `zabbix_operator_hanode_gc_last_success_timestamp_seconds` | gauge | Time of the last successful `ha-gc` run |
 | `zabbix_operator_agent_nodes_desired` | gauge | Nodes that should run an agent (only when the agent is enabled) |
 | `zabbix_operator_agent_nodes_ready` | gauge | Nodes with a ready agent (only when the agent is enabled) |
+| `zabbix_operator_compatibility_config_valid` | gauge | 0 while the compatibility ConfigMap is unreadable or invalid (only the built-in lines apply) |
 | `zabbix_operator_proxies_registered` | gauge | Proxies kept registered in Zabbix (only when proxy registration is enabled) |
 | `zabbix_operator_proxy_registration_failing` | gauge | 1 while the last proxy registration sync failed (only when enabled) |
 | `zabbix_operator_proxy_registration_syncs_total` | counter | Syncs with the Zabbix API per `result` (`succeeded`, `failed`) |
@@ -636,6 +646,7 @@ are exported as well.
 | operator | `ZabbixOperatorDown` | No operator target is up for 5m |
 | server | `ZabbixSystemRunning` | Info heartbeat: fires while a system is Running and its `ha-gc` check succeeded within 10m; with `repeat_interval: 5m` it notifies after every `ha-gc` cycle, and its absence is the signal |
 | operator | `ZabbixOperatorReconcileErrors` | Reconcile errors persist for 15m |
+| operator | `ZabbixOperatorCompatibilityConfigInvalid` | The compatibility ConfigMap is invalid for 10m |
 | database | `ZabbixDatabaseNotReady` | `database_ready == 0` for 5m (critical after 15m) |
 | database | `ZabbixDatabasePrimaryFlapping` | `PrimaryStable` False for 10m |
 | server | `ZabbixServerNoActiveNode` | `server_active_nodes == 0` for 2m while Running or Degraded (critical) |

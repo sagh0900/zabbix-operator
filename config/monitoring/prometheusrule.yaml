@@ -25,6 +25,15 @@ spec:
             summary: Zabbix operator reconcile errors
             description: Controller {{ $labels.controller }} has failed reconciles for 15 minutes.
             runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatorreconcileerrors
+        - alert: ZabbixOperatorCompatibilityConfigInvalid
+          expr: zabbix_operator_compatibility_config_valid == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Zabbix operator compatibility ConfigMap is invalid
+            description: The compatibility ConfigMap has been unreadable or invalid for 10 minutes; only the built-in Zabbix release lines apply.
+            runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatorcompatibilityconfiginvalid
     - name: zabbix-operator.database
       rules:
         - alert: ZabbixDatabaseNotReady

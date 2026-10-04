@@ -48,6 +48,8 @@ func Main(args []string) int {
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	resultFile := fs.String("result-file", "/dev/termination-log", "Where to write the JSON result.")
 	target := fs.String("target-version", "", "precheck: the Zabbix version to check for.")
+	minPostgres := fs.Int("min-postgres", 0, "precheck: the oldest PostgreSQL major version the target line runs on; 0: unbounded.")
+	maxPostgres := fs.Int("max-postgres", 0, "precheck: the newest PostgreSQL major version the target line runs on; 0: unbounded.")
 	keep := fs.String("keep", "", "ha-gc: comma-separated names of live server pods.")
 	stale := fs.Int("stale-seconds", 30, "ha-reset, ha-gc: rows heartbeating within this window are live.")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -82,7 +84,7 @@ func Main(args []string) int {
 		defer conn.Close(context.Background()) //nolint:errcheck // process exits next
 		switch cmd {
 		case CommandPrecheck:
-			r = Precheck(ctx, conn, v)
+			r = Precheck(ctx, conn, v, zabbix.Line{Line: v.Line(), MinPostgres: *minPostgres, MaxPostgres: *maxPostgres})
 		case CommandHAReset:
 			r = HAReset(ctx, conn, *stale)
 		case CommandHAGC:

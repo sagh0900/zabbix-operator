@@ -35,8 +35,8 @@ var (
 func exported(t *testing.T) map[string]bool {
 	t.Helper()
 	names := map[string]bool{}
-	collectors := make([]prometheus.Collector, 0, 3+len(systemCollectors))
-	collectors = append(collectors, DatabaseReady, DatabaseCondition, DatabasePrimaryChanges)
+	collectors := make([]prometheus.Collector, 0, len(otherCollectors)+len(systemCollectors))
+	collectors = append(collectors, otherCollectors...)
 	for _, c := range systemCollectors {
 		collectors = append(collectors, c)
 	}

@@ -47,9 +47,10 @@ func TestDecide(t *testing.T) {
 			"the database is in recovery; connect to the primary"},
 		{"downgrade", facts{versionNum: pg(17), mandatory: 7050195}, "7.0.25", false, "Downgrade", zabbix.Downgrade,
 			"the database schema (dbversion 7050195) is newer than Zabbix 7.0.25; Zabbix cannot downgrade"},
-		{"unsupported line", facts{versionNum: pg(17)}, "9.0.0", false, "UnsupportedVersion", "",
-			"Zabbix 9.0 is not supported by this operator version (supported lines: 7.0, 7.2, 7.4, 8.0)"},
-		{"unsupported before replica", facts{versionNum: pg(17), inRecovery: true}, "9.0.0", false, "UnsupportedVersion", "", ""},
+		{"8.0 on 19 is blocked", facts{versionNum: pg(19), mandatory: 7000000}, "8.0.0", false, "PostgreSQLTooNew", "",
+			"PostgreSQL 19 is too new for Zabbix 8.0 (supports up to 18)"},
+		{"7.4 on 17", facts{versionNum: pg(17), mandatory: 7040000}, "7.4.7", true, "", zabbix.SameSchema,
+			"PostgreSQL 17, schema 7040000 already matches Zabbix 7.4.7"},
 		{"replica before old postgres", facts{versionNum: pg(14), inRecovery: true}, "8.0.0rc1", false, "NotPrimary", "", ""},
 	}
 	for _, c := range cases {
@@ -58,7 +59,11 @@ func TestDecide(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := decide(c.f, v)
+			line, ok := zabbix.Builtin().Lookup(v)
+			if !ok {
+				t.Fatalf("line of %s not built in", c.target)
+			}
+			r := decide(c.f, v, line)
 			if r.OK != c.ok || r.Reason != c.reason || r.Change != string(c.change) {
 				t.Errorf("got ok=%v reason=%q change=%q (%s)", r.OK, r.Reason, r.Change, r.Message)
 			}
