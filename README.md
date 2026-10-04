@@ -31,12 +31,14 @@ kubectl -n zabbix get zsys -w
 | [Migration](docs/migration.md) | Moving a running plain-manifest or Helm installation to the operator |
 | [Alerts](docs/alerts.md) | Runbook for every alert |
 | [Architecture](docs/architecture.md) | The design, every field and behaviour |
+| [Testing](docs/testing.md) | The test suites, including the end-to-end suite on kind |
 | [Examples](examples) | Manifests, validated against the CRDs by the test suite |
 
 ## Build
 
 ```sh
 make test              # unit and envtest suites
+make test-e2e          # end-to-end suite on a kind cluster (docs/testing.md)
 make lint              # golangci-lint
 make build             # bin/manager
 make docker-build      # ghcr.io/sagh0900/zabbix-operator:v$(cat VERSION)

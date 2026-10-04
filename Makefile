@@ -27,7 +27,7 @@ PROMTOOL       ?= $(LOCALBIN)/promtool-$(PROMETHEUS_VERSION)
 help: ## Show targets.
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/{printf "  %-16s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 
-.PHONY: manifests generate fmt vet lint test test-db test-monitoring build build-installer
+.PHONY: manifests generate fmt vet lint test test-db test-monitoring test-e2e build build-installer
 manifests: $(CONTROLLER_GEN) ## Generate CRDs and RBAC from markers.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
 generate: $(CONTROLLER_GEN) ## Generate deepcopy code.
@@ -54,6 +54,8 @@ test-db: ## Run the database tests against each PostgreSQL major version in PG_V
 			go test ./internal/jobs/ -run DB -count=1; \
 		$(CONTAINER_TOOL) rm -f $$name >/dev/null 2>&1; \
 	done
+test-e2e: ## End-to-end suite on a dedicated kind cluster (zabbix-e2e); needs Docker and kind.
+	hack/e2e-kind.sh
 test-monitoring: $(PROMTOOL) ## Check and unit-test the Prometheus rules.
 	@tmp=$$(mktemp -d) && trap 'rm -rf '$$tmp EXIT && \
 		go run ./hack/extract-rules config/monitoring/prometheusrule.yaml > $$tmp/rules.yaml && \
