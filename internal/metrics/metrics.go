@@ -179,7 +179,7 @@ func init() {
 }
 
 // SystemPhases are the phases a ZabbixSystem reports.
-var SystemPhases = []string{"Installing", "Running", "Upgrading", "Degraded", "Blocked"}
+var SystemPhases = []string{"Installing", "Running", "Upgrading", "Degraded", "Blocked", "Suspended"}
 
 // SetSystemPhase sets the phase series so exactly the current phase is 1.
 func SetSystemPhase(ns, name, phase string) {
@@ -219,6 +219,13 @@ func DeleteRegistration(ns, name string) {
 	labels := prometheus.Labels{labelNamespace: ns, labelSystem: name}
 	ProxiesRegistered.DeletePartialMatch(labels)
 	ProxyRegistrationFailing.DeletePartialMatch(labels)
+}
+
+// DeleteComponents removes the pod count series of a suspended system.
+func DeleteComponents(ns, name string) {
+	labels := prometheus.Labels{labelNamespace: ns, labelSystem: name}
+	ComponentPodsDesired.DeletePartialMatch(labels)
+	ComponentPodsReady.DeletePartialMatch(labels)
 }
 
 // DeleteSystem removes every series of a deleted ZabbixSystem.
