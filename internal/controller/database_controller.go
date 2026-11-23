@@ -84,7 +84,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	cluster.SetGroupVersionKind(CNPGClusterGVK)
 	err := r.Get(ctx, types.NamespacedName{Namespace: db.Namespace, Name: db.Spec.ClusterRef.Name}, cluster)
 	switch {
-	case apierrors.IsNotFound(err):
+	case apierrors.IsNotFound(err), meta.IsNoMatchError(err):
+		// Without CloudNativePG installed, the cluster is reported as missing.
 		cluster = nil
 	case err != nil:
 		return ctrl.Result{}, err
@@ -180,16 +181,31 @@ func (r *DatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	cluster := &unstructured.Unstructured{}
-	cluster.SetGroupVersionKind(CNPGClusterGVK)
-
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		Named("zabbixdatabase").
 		For(&zabbixv1alpha1.ZabbixDatabase{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(cluster, handler.EnqueueRequestsFromMapFunc(r.byIndex(indexClusterRef))).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.byIndex(indexSecretRef)),
-			builder.OnlyMetadata).
-		Complete(r)
+			builder.OnlyMetadata)
+	if CNPGInstalled(mgr.GetRESTMapper()) {
+		cluster := &unstructured.Unstructured{}
+		cluster.SetGroupVersionKind(CNPGClusterGVK)
+		b = b.Watches(cluster, handler.EnqueueRequestsFromMapFunc(r.byIndex(indexClusterRef)))
+	}
+	return b.Complete(r)
+}
+
+// CNPGInstalled reports whether the CloudNativePG Cluster kind is served. Without it the
+// operator still runs edge systems; watches on CNPG objects are left out, because a watch
+// on a missing kind keeps its controller from starting. CloudNativePG installed later is
+// picked up when the operator restarts. Errors other than a missing kind count as
+// installed, so a discovery hiccup never silently drops the watches.
+func CNPGInstalled(mapper meta.RESTMapper) bool {
+	_, err := mapper.RESTMapping(CNPGClusterGVK.GroupKind(), CNPGClusterGVK.Version)
+	if meta.IsNoMatchError(err) {
+		ctrl.Log.WithName("setup").Info("CloudNativePG is not installed; only edge systems can run until the operator restarts after it is")
+		return false
+	}
+	return true
 }
 
 // byIndex maps an object to the ZabbixDatabases in its namespace whose indexed field

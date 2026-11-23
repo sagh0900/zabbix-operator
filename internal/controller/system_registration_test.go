@@ -191,6 +191,11 @@ func TestSystem_EdgeSystem(t *testing.T) {
 	if sys.Status.RunningVersion != "7.0.25" || sys.Status.ActiveServer != nil {
 		t.Errorf("status %+v", sys.Status)
 	}
+	for _, c := range []string{zabbixv1alpha1.SystemDatabaseReady, zabbixv1alpha1.SystemServerActive} {
+		if got := meta.FindStatusCondition(sys.Status.Conditions, c); got == nil || got.Status != metav1.ConditionTrue || got.Reason != "RemoteServer" {
+			t.Errorf("%s = %+v, want True RemoteServer", c, got)
+		}
+	}
 
 	// Nothing of a server runs, and no Job touched a database.
 	pods := &corev1.PodList{}
