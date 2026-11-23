@@ -8,7 +8,7 @@ system. The manifests it uses are in [`examples/`](../examples).
 | Component | Version |
 |---|---|
 | Kubernetes | 1.29 or newer (CEL validation rules) |
-| CloudNativePG | Any release with the `postgresql.cnpg.io/v1` API; tested with 1.30. In-place PostgreSQL major upgrades need 1.26 or newer |
+| CloudNativePG | Any release with the `postgresql.cnpg.io/v1` API; tested with 1.30. In-place PostgreSQL major upgrades need 1.26 or newer. Not needed in a cluster that runs only [edge systems](architecture.md#edge-systems); install it before the operator, or restart the operator after installing it |
 | PostgreSQL | Zabbix 7.0, 7.2 and 7.4: 13 or newer. Zabbix 8.0: 15 to 18 |
 | Prometheus Operator | Optional, for the monitoring bundle |
 

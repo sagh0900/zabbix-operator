@@ -843,13 +843,21 @@ func setConditions(sys *zabbixv1alpha1.ZabbixSystem, st *zabbixv1alpha1.ZabbixSy
 		}
 		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: t, Status: s, Reason: reason, Message: msg, ObservedGeneration: gen})
 	}
-	if obs.dbReady != nil {
+	remote := !sys.Spec.Server.IsEnabled()
+	switch {
+	case remote:
+		// Like a disabled frontend: nothing here to be unready.
+		set(zabbixv1alpha1.SystemDatabaseReady, true, "RemoteServer", "the server and its database run elsewhere")
+	case obs.dbReady != nil:
 		set(zabbixv1alpha1.SystemDatabaseReady, obs.dbReady.Status == metav1.ConditionTrue, obs.dbReady.Reason, obs.dbReady.Message)
-	} else {
+	default:
 		set(zabbixv1alpha1.SystemDatabaseReady, false, "DatabaseNotFound", obs.reason)
 	}
 	suspended := obs.phase == zabbixv1alpha1.PhaseSuspended
 	switch {
+	case remote:
+		set(zabbixv1alpha1.SystemServerActive, true, "RemoteServer",
+			"proxies and agents report to "+strings.Join(sys.Spec.Server.RemoteAddresses, ", "))
 	case suspended && obs.activeN == 0:
 		set(zabbixv1alpha1.SystemServerActive, false, "Suspended", "the system is suspended")
 	case obs.activeN == 1:
@@ -929,7 +937,7 @@ func (r *SystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}); err != nil {
 		return err
 	}
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		Named("zabbixsystem").
 		For(&zabbixv1alpha1.ZabbixSystem{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&corev1.Pod{}).
@@ -940,16 +948,18 @@ func (r *SystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.DaemonSet{}).
 		Watches(&zabbixv1alpha1.ZabbixDatabase{}, handler.EnqueueRequestsFromMapFunc(r.systemsBy(indexSystemDatabase, ""))).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.systemsForSecret), builder.OnlyMetadata).
-		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.systemsBy(indexSystemRefs, "ConfigMap/")), builder.OnlyMetadata).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.systemsBy(indexSystemRefs, "ConfigMap/")), builder.OnlyMetadata)
+	if CNPGInstalled(mgr.GetRESTMapper()) {
 		// Upgrade gates depend on the CNPG cluster's health and its Backups.
-		Watches(newCNPGClusterObject(), handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+		b = b.Watches(newCNPGClusterObject(), handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
 			return r.systemsForCluster(ctx, o.GetNamespace(), o.GetName())
 		})).
-		Watches(newCNPGBackupObject(), handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
-			name, _, _ := unstructured.NestedString(o.(*unstructured.Unstructured).Object, "spec", "cluster", "name")
-			return r.systemsForCluster(ctx, o.GetNamespace(), name)
-		})).
-		Complete(r)
+			Watches(newCNPGBackupObject(), handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+				name, _, _ := unstructured.NestedString(o.(*unstructured.Unstructured).Object, "spec", "cluster", "name")
+				return r.systemsForCluster(ctx, o.GetNamespace(), name)
+			}))
+	}
+	return b.Complete(r)
 }
 
 // referencedKeys indexes a system by every Secret and ConfigMap its pods read, plus the

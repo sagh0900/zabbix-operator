@@ -270,3 +270,14 @@ func TestDatabase_RejectsVerifyWithoutCA(t *testing.T) {
 		t.Fatalf("valid TLS spec rejected: %v", err)
 	}
 }
+
+func TestCNPGInstalled(t *testing.T) {
+	mapper := meta.NewDefaultRESTMapper(nil)
+	if CNPGInstalled(mapper) {
+		t.Error("CNPG reported installed without its kinds")
+	}
+	mapper.Add(CNPGClusterGVK, meta.RESTScopeNamespace)
+	if !CNPGInstalled(mapper) {
+		t.Error("CNPG reported missing with its Cluster kind")
+	}
+}
