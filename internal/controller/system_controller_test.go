@@ -1220,6 +1220,60 @@ func TestSystem_ProxiesFollowServersInUpgrades(t *testing.T) {
 	}
 }
 
+// A registry change in the same edit as the version reaches each component only when it
+// moves: components still waiting keep their full old image, which may not exist under the
+// new registry.
+func TestSystem_RegistryChangeWaitsForTheVersion(t *testing.T) {
+	requireEnvtest(t)
+	ns := newNamespace(t)
+	installed(t, ns, "7.0.1", func(s *zabbixv1alpha1.ZabbixSystem) {
+		s.Spec.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "dc1", Replicas: 1}}
+	})
+	setPod(t, ns, "dc1-0")
+	s0, s1 := uid(t, ns, "zabbix-server-0"), uid(t, ns, "zabbix-server-1")
+	web, ws, proxy := uid(t, ns, "zabbix-web-0"), uid(t, ns, "zabbix-webservice-0"), uid(t, ns, "dc1-0")
+	unchanged := func(when string) {
+		t.Helper()
+		for name, want := range map[string]types.UID{"zabbix-server-0": s0, "zabbix-web-0": web, "zabbix-webservice-0": ws, "dc1-0": proxy} {
+			if p := getPod(t, ns, name); p == nil || p.UID != want || !strings.HasPrefix(image(p), "zabbix/") {
+				t.Errorf("%s: %s was replaced or changed image", when, name)
+			}
+		}
+	}
+
+	patchSpec(t, ns, func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+		s.Version = "7.0.25"
+		s.ImageRepository = "registry.example/zabbix"
+	})
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "Checking the database for Zabbix 7.0.25")
+	unchanged("while checking the database")
+	if p := getPod(t, ns, "zabbix-server-1"); p.UID != s1 {
+		t.Error("zabbix-server-1 was replaced before the precheck")
+	}
+
+	finishJob(t, ns, jobs.Result{Command: jobs.CommandPrecheck, OK: true, Change: string(zabbix.SameSchema)})
+	if p := waitReplaced(t, ns, "zabbix-server-1", s1); image(p) != "registry.example/zabbix/zabbix-server-pgsql:ubuntu-7.0.25" {
+		t.Errorf("upgraded server image %q", image(p))
+	}
+	waitPhase(t, ns, zabbixv1alpha1.PhaseUpgrading, "Upgrading from 7.0.1 to 7.0.25")
+	unchanged("while the servers upgrade")
+	if image(getPod(t, ns, "zabbix-web-0")) != "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.0.1" {
+		t.Errorf("waiting frontend image %q", image(getPod(t, ns, "zabbix-web-0")))
+	}
+
+	setPod(t, ns, "zabbix-server-1")
+	waitReplaced(t, ns, "zabbix-server-0", s0)
+	setActive(ns, "zabbix-server-1")
+	setPod(t, ns, "zabbix-server-0")
+	eventually(t, func() error {
+		p := getPod(t, ns, "zabbix-web-0")
+		if p == nil || image(p) != "registry.example/zabbix/zabbix-web-nginx-pgsql:ubuntu-7.0.25" {
+			return fmt.Errorf("frontend not moved yet")
+		}
+		return nil
+	})
+}
+
 func TestSystem_AgentDaemonSet(t *testing.T) {
 	requireEnvtest(t)
 	ns := newNamespace(t)

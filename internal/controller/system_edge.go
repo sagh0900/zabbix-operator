@@ -46,6 +46,13 @@ func (r *SystemReconciler) reconcileProxies(ctx context.Context, sys *zabbixv1al
 		if p.IsEnabled() {
 			wanted[system.ProxyComponent(p)] = true
 			in := r.input(ctx, sys, db, version, &p.PodSettings, false)
+			if version != sys.Spec.Version {
+				pods, err := r.componentPods(ctx, sys, system.ProxyComponent(p))
+				if err != nil {
+					return "", err
+				}
+				in.Image = heldImage(sys, version, pods)
+			}
 			replicas := int(p.Replicas)
 			if replicas < 1 {
 				replicas = 1

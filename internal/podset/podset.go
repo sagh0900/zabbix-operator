@@ -409,11 +409,14 @@ func (m *Manager) reconcileBudget(ctx context.Context, set Set) (string, error) 
 		return "", client.IgnoreNotFound(m.Client.Delete(ctx, pdb))
 	}
 
+	// A whole-number minAvailable of one less than the members: Kubernetes can only enforce
+	// maxUnavailable or a percentage by asking the pods' controller for its scale, and the
+	// owner of bare pods has no scale subresource. With minAvailable it counts the pods.
+	minAvailable := intstr.FromInt32(int32(len(set.Members) - 1))
 	_, err = controllerutil.CreateOrPatch(ctx, m.Client, pdb, func() error {
-		one := intstr.FromInt32(1)
 		pdb.Labels = mergeMaps(pdb.Labels, SelectorLabels(set.System, set.Component))
-		pdb.Spec.MaxUnavailable = &one
-		pdb.Spec.MinAvailable = nil
+		pdb.Spec.MinAvailable = &minAvailable
+		pdb.Spec.MaxUnavailable = nil
 		pdb.Spec.Selector = &metav1.LabelSelector{MatchLabels: SelectorLabels(set.System, set.Component)}
 		return controllerutil.SetControllerReference(set.Owner, pdb, m.Scheme)
 	})
