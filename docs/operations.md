@@ -118,7 +118,19 @@ Resuming starts the system like a running one. Details in
 - External proxies and agents send to the address of the `zabbix-server` Service, usually a
   LoadBalancer IP (`server.service`).
 - The agent DaemonSet monitors the nodes themselves under the node name as host name. Its
-  image is set explicitly in `agent.image` and is not changed by Zabbix upgrades.
+  image is set explicitly in `agent.image` and is not changed by Zabbix upgrades. With
+  `agent.reportTo: <proxy>` the agents send active checks to that in-cluster proxy; monitor
+  the node hosts by that proxy in Zabbix.
+
+### Edge clusters
+
+A cluster without its own Zabbix server runs an edge system (`server.enabled: false`) whose
+proxies and agents report to a central server, for example the system of another cluster
+exposed through a LoadBalancer. Start from
+[`examples/system-edge.yaml`](../examples/system-edge.yaml): set `server.remoteAddresses` to
+the central server's trapper address, `proxyRegistration.url` to the central frontend's API
+and a token Secret of the central Zabbix. Details:
+[Architecture](architecture.md#edge-systems).
 
 ### Proxy registration
 

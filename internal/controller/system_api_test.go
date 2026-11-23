@@ -58,7 +58,7 @@ func newSystem(ns, version string) *zabbixv1alpha1.ZabbixSystem {
 		ObjectMeta: metav1.ObjectMeta{Name: "zabbix", Namespace: ns},
 		Spec: zabbixv1alpha1.ZabbixSystemSpec{
 			Version:     version,
-			DatabaseRef: zabbixv1alpha1.LocalObjectReference{Name: "zabbix-db"},
+			DatabaseRef: &zabbixv1alpha1.LocalObjectReference{Name: "zabbix-db"},
 		},
 	}
 }
@@ -179,6 +179,31 @@ func TestSystemAPI_FieldRules(t *testing.T) {
 			s.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "DC_1"}}
 		}, "spec.proxies[0].name"},
 		{"unknown service type", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Server.Service.Type = "ExternalName" }, "spec.server.service.type"},
+		{"edge system", edge, ""},
+		{"edge without a database", func(s *zabbixv1alpha1.ZabbixSystemSpec) { edge(s); s.DatabaseRef = nil }, ""},
+		{"local server needs a database", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.DatabaseRef = nil }, "spec.databaseRef is required"},
+		{"edge needs remote addresses", func(s *zabbixv1alpha1.ZabbixSystemSpec) { edge(s); s.Server.RemoteAddresses = nil }, "spec.server.remoteAddresses is required"},
+		{"remote addresses only on edge", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Server.RemoteAddresses = []string{"10.0.0.1"} }, "spec.server.remoteAddresses is required"},
+		{"remote address syntax", func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+			edge(s)
+			s.Server.RemoteAddresses = []string{"10.0.0.1;10.0.0.2"}
+		}, "spec.server.remoteAddresses[0]"},
+		{"edge runs no frontend", func(s *zabbixv1alpha1.ZabbixSystemSpec) { edge(s); s.Web.Enabled = nil }, "spec.web.enabled and spec.webService.enabled must be false"},
+		{"edge runs no web service", func(s *zabbixv1alpha1.ZabbixSystemSpec) { edge(s); s.WebService.Enabled = ptr.To(true) }, "spec.web.enabled and spec.webService.enabled must be false"},
+		{"edge proxies are active", func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+			edge(s)
+			s.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "edge", Mode: zabbixv1alpha1.ProxyPassive}}
+		}, "proxies must be active"},
+		{"edge registration needs the remote URL", func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+			edge(s)
+			s.ProxyRegistration = zabbixv1alpha1.ProxyRegistrationSpec{Enabled: true,
+				APITokenSecretRef: &zabbixv1alpha1.SecretKeyReference{Name: "t", Key: "token"}}
+		}, "spec.proxyRegistration.url"},
+		{"agent reports to a proxy", func(s *zabbixv1alpha1.ZabbixSystemSpec) {
+			edge(s)
+			s.Agent = zabbixv1alpha1.AgentSpec{Enabled: true, ReportTo: "edge", PodSettings: zabbixv1alpha1.PodSettings{Image: "zabbix/zabbix-agent2:ubuntu-7.0.25"}}
+		}, ""},
+		{"agent reportTo must name a proxy", func(s *zabbixv1alpha1.ZabbixSystemSpec) { s.Agent.ReportTo = "nope" }, "spec.agent.reportTo must name a proxy"},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -249,6 +274,40 @@ func TestDocExamplesAreValid(t *testing.T) {
 	if found < 2 {
 		t.Fatalf("found %d API examples in the architecture document, want at least 2", found)
 	}
+}
+
+// edge makes spec an edge system reporting to a remote server.
+func edge(s *zabbixv1alpha1.ZabbixSystemSpec) {
+	s.Server.Enabled = ptr.To(false)
+	s.Server.RemoteAddresses = []string{"10.11.135.132", "zbx-2.example.com:10051"}
+	s.Web.Enabled, s.WebService.Enabled = ptr.To(false), ptr.To(false)
+	s.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "edge"}}
+}
+
+func TestSystemAPI_ServerModeImmutable(t *testing.T) {
+	requireEnvtest(t)
+	ctx := context.Background()
+	ns := newNamespace(t)
+	sys := newSystem(ns, "7.0.25")
+	edge(&sys.Spec)
+	if err := k8s.Create(ctx, sys); err != nil {
+		t.Fatal(err)
+	}
+	before := sys.DeepCopy()
+	sys.Spec.Server.Enabled = ptr.To(true)
+	sys.Spec.Server.RemoteAddresses = nil
+	expectRejected(t, k8s.Patch(ctx, sys, client.MergeFrom(before)), "spec.server.enabled is immutable")
+
+	// An edge system created without a database cannot gain one later.
+	bare := newSystem(ns, "7.0.25")
+	bare.Name, bare.Spec.DatabaseRef = "bare", nil
+	edge(&bare.Spec)
+	if err := k8s.Create(ctx, bare); err != nil {
+		t.Fatal(err)
+	}
+	before = bare.DeepCopy()
+	bare.Spec.DatabaseRef = &zabbixv1alpha1.LocalObjectReference{Name: "zabbix-db"}
+	expectRejected(t, k8s.Patch(ctx, bare, client.MergeFrom(before)), "spec.databaseRef is immutable")
 }
 
 // A manifest that leaves sections out entirely (as kubectl sends it) still gets every

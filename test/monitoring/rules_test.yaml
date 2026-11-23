@@ -276,6 +276,10 @@ tests:
         values: '0x2 1x30'
       - series: 'zabbix_operator_hanode_gc_last_success_timestamp_seconds{namespace="zabbix",system="zabbix"}'
         values: '_x3 180x5 480x25'
+      - series: 'zabbix_operator_server_active_nodes{namespace="zabbix",system="zabbix"}'
+        values: '1x32'
+      - series: 'zabbix_operator_server_active_nodes{namespace="zabbix",system="degraded"}'
+        values: '0x32'
       # A degraded system with recent ha-gc runs must not send the heartbeat.
       - series: 'zabbix_operator_system_phase{namespace="zabbix",system="degraded",phase="Running"}'
         values: '0x32'
@@ -293,7 +297,7 @@ tests:
           - exp_labels: { severity: info, namespace: zabbix, system: zabbix, phase: Running }
             exp_annotations:
               summary: Zabbix system is running
-              description: ZabbixSystem zabbix/zabbix is running and its ha-gc check succeeded within the last 10 minutes. This alert fires continuously as a heartbeat; its absence means the system is not running or its maintenance has stopped.
+              description: ZabbixSystem zabbix/zabbix is running and, if it runs its own server, its ha-gc check succeeded within the last 10 minutes. This alert fires continuously as a heartbeat; its absence means the system is not running or its maintenance has stopped.
               runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixsystemrunning
       - eval_time: 19m
         alertname: ZabbixSystemRunning
@@ -354,3 +358,25 @@ tests:
               summary: Zabbix operator compatibility ConfigMap is invalid
               description: The compatibility ConfigMap has been unreadable or invalid for 10 minutes; only the built-in Zabbix release lines apply.
               runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixoperatorcompatibilityconfiginvalid
+
+  - name: running watchdog of an edge system
+    interval: 1m
+    input_series:
+      # An edge system has no server of its own: no active-node series and no ha-gc.
+      - series: 'zabbix_operator_system_phase{namespace="edge",system="edge",phase="Running"}'
+        values: '0x2 1x10 0x5'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ZabbixSystemRunning
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ZabbixSystemRunning
+        exp_alerts:
+          - exp_labels: { severity: info, namespace: edge, system: edge, phase: Running }
+            exp_annotations:
+              summary: Zabbix system is running
+              description: ZabbixSystem edge/edge is running and, if it runs its own server, its ha-gc check succeeded within the last 10 minutes. This alert fires continuously as a heartbeat; its absence means the system is not running or its maintenance has stopped.
+              runbook_url: https://github.com/sagh0900/zabbix-operator/blob/main/docs/alerts.md#zabbixsystemrunning
+      - eval_time: 15m
+        alertname: ZabbixSystemRunning
+        exp_alerts: []

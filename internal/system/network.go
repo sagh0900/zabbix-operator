@@ -58,8 +58,11 @@ func ServiceObjectName(sys *zabbixv1alpha1.ZabbixSystem, s ServiceSpec) string {
 
 // Services returns the Services the system needs.
 func Services(sys *zabbixv1alpha1.ZabbixSystem) []ServiceSpec {
-	out := []ServiceSpec{{Component: Server, PortName: portTrapper, Port: TrapperPort, TargetPort: portTrapper,
-		Settings: sys.Spec.Server.Service}}
+	var out []ServiceSpec
+	if sys.Spec.Server.IsEnabled() {
+		out = append(out, ServiceSpec{Component: Server, PortName: portTrapper, Port: TrapperPort, TargetPort: portTrapper,
+			Settings: sys.Spec.Server.Service})
+	}
 	if sys.Spec.Web.IsEnabled() {
 		out = append(out, ServiceSpec{Component: Web, PortName: portHTTP, Port: 80, TargetPort: portHTTP, Settings: sys.Spec.Web.Service})
 	}

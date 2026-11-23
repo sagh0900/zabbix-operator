@@ -44,8 +44,9 @@ const (
 )
 
 // TestJourney runs one installation through its life in order: install 7.4.7, HA failover,
-// agents (first blocked by another agent on the host port), a proxy with registration,
-// suspend and resume, and the schema upgrade to 8.0.0rc1.
+// agents (first blocked by another agent on the host port), a proxy with registration, an
+// edge system in another namespace reporting to it, suspend and resume, and the schema
+// upgrade to 8.0.0rc1.
 func TestJourney(t *testing.T) {
 	j := &journey{ns: namespace(t, "journey")}
 	ns := j.ns
@@ -61,6 +62,7 @@ spec:
 	t.Run("Install", j.install)
 	t.Run("Failover", j.failover)
 	t.Run("AgentsAndProxy", j.agentsAndProxy)
+	t.Run("EdgeSystem", j.edgeSystem)
 	t.Run("SuspendAndResume", j.suspendAndResume)
 	t.Run("UpgradeTo80", j.upgradeTo80)
 }
@@ -289,5 +291,70 @@ func (j *journey) upgradeTo80(t *testing.T) {
 			}
 			return fmt.Errorf("proxies %+v", proxies)
 		})
+	}
+}
+
+// edgeSystem runs an edge system in another namespace, as a separate cluster would: no
+// server, frontend or database, one proxy reporting to the journey system's server Service
+// and registered through its frontend's API. The proxy must come online in the journey
+// system. Agents are left out: the journey agents already hold the nodes' host port.
+func (j *journey) edgeSystem(t *testing.T) {
+	edge := namespace(t, "edge")
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: edge, Name: "zabbix-api-token"},
+		StringData: map[string]string{"token": j.token}}
+	if err := e.c.Create(ctx(), secret); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, edge, fmt.Sprintf(`apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSystem
+metadata: { name: zabbix }
+spec:
+  version: "7.4.7"
+  server:
+    enabled: false
+    remoteAddresses: ["zabbix-server.%[1]s.svc:10051"]
+  web: { enabled: false }
+  webService: { enabled: false }
+  proxies: [{ name: edge-proxy, mode: active }]
+  proxyRegistration:
+    enabled: true
+    prune: true
+    url: http://zabbix-web.%[1]s.svc:80/api_jsonrpc.php
+    apiTokenSecretRef: { name: zabbix-api-token, key: token }
+`, j.ns))
+	waitPhase(t, edge, zabbixv1alpha1.PhaseRunning, "Reporting to the remote server", 5*time.Minute)
+
+	pods := &corev1.PodList{}
+	if err := e.c.List(ctx(), pods, client.InNamespace(edge)); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pods.Items {
+		if p.Name != "edge-proxy-0" {
+			t.Errorf("unexpected pod %s on the edge system", p.Name)
+		}
+	}
+
+	web := forward(t, j.ns, "zabbix-web-0", 8080)
+	waitFor(t, 5*time.Minute, "the edge proxy registered and online in the journey system", func() error {
+		if sys := system(t, edge); !slices.Contains(sys.Status.RegisteredProxies, "edge-proxy-0") {
+			return fmt.Errorf("registered %v", sys.Status.RegisteredProxies)
+		}
+		var proxies []struct {
+			Name, State, Compatibility string
+		}
+		query := map[string]any{"output": []string{"name", "state", "compatibility"},
+			"filter": map[string]any{"name": "edge-proxy-0"}}
+		if err := zabbixAPI(t, web, j.token, "proxy.get", query, &proxies); err != nil {
+			return err
+		}
+		if len(proxies) == 1 && proxies[0].State == "2" && proxies[0].Compatibility == "1" {
+			return nil
+		}
+		return fmt.Errorf("proxies %+v", proxies)
+	})
+
+	// The edge system goes away; its proxy entry stays in Zabbix, offline.
+	if err := e.c.Delete(ctx(), system(t, edge)); err != nil {
+		t.Fatal(err)
 	}
 }

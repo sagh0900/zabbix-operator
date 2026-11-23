@@ -107,7 +107,7 @@ metadata:
   name: zabbix
 spec:
   version: "7.0.25"            # Zabbix version for server, web, web service and proxies
-  databaseRef:
+  databaseRef:                 # required unless server.enabled is false
     name: zabbix-db
   suspend: false               # true stops every Zabbix pod, see "Suspend"
   imageRepository: zabbix      # registry and path prefix, e.g. a mirror
@@ -119,6 +119,7 @@ spec:
     requireBackupWithin: 24h   # major upgrade waits for a completed CNPG Backup this recent
 
   server:
+    enabled: true              # default; false makes an edge system, see "Edge systems"
     replicas: 2
     env: []                    # ZBX_* tuning passed to the image entrypoint
     service:
@@ -154,6 +155,7 @@ spec:
   agent:
     enabled: true
     image: zabbix/zabbix-agent2:ubuntu-7.0.25
+    reportTo: ""               # optional proxy name; agents send active checks to it instead of the server
 
   proxyRegistration:           # optional, see "Proxy registration"
     enabled: false
@@ -165,7 +167,7 @@ pod-level settings:
 | Field | Purpose |
 |---|---|
 | `image` | Override the image derived from `version` and `imageFlavor` |
-| `enabled` | Runs the component: `web`, `webService` and each proxy (default true), `agent` (default false). The server always runs. |
+| `enabled` | Runs the component: `server`, `web`, `webService` and each proxy (default true), `agent` (default false). `server.enabled: false` makes an [edge system](#edge-systems). |
 | `replicas` | Instance count: server 1–9 (default 2), web and web service 1–20 (default 1), proxies 1–20 (default 1); not for `agent`, which runs one pod per eligible node |
 | `resources` | Container resources |
 | `env`, `envFrom` | Extra environment; operator-managed keys cannot be overridden |
@@ -358,10 +360,32 @@ When `agent.enabled` is true, a DaemonSet `<system>-agent` runs agent 2 on every
 matching the agent's placement settings. It runs in the node's network and process
 namespaces, so it monitors the node itself, and needs a namespace that allows this (Pod
 Security `privileged`). It uses the node name as host name, sends active checks to the
-`<system>-server` Service and accepts passive checks from the server Pods. The agent image is
+`<system>-server` Service (the remote server on an edge system, or with `agent.reportTo` every
+instance of that proxy) and accepts passive checks from any address, since server and proxy
+Pod IPs change. The agent image is
 set explicitly because agents are versioned independently of the server. Agent coverage is
 reported in the status and metrics, and by `ZabbixAgentNodesMissing`, but does not change the
 system's phase.
+
+### Edge systems
+
+With `server.enabled: false`, a ZabbixSystem runs only proxies and agents and reports to a
+Zabbix server elsewhere, at `server.remoteAddresses` (`host` or `host:port`; several entries
+are the nodes of one HA cluster, passed to Zabbix separated by semicolons). It is meant for
+edge clusters that feed a central system:
+
+- No server, frontend, web service, database, schema Jobs or `ha-gc`. `databaseRef` is not
+  needed, and `web.enabled` and `webService.enabled` must be false.
+- Proxies must be active: the remote server cannot reach in-cluster passive proxies.
+- A version change moves the proxies directly; the remote server's version decides whether it
+  accepts them (an 8.0 server treats 7.0 proxies as outdated).
+- Proxy registration needs `proxyRegistration.url`, the remote frontend's API. Proxy names
+  must be unique in the remote Zabbix.
+- The phase is Running once the proxies are ready; `zabbix_operator_server_active_nodes` is
+  not reported, and the `ZabbixSystemRunning` heartbeat follows the phase alone.
+- `server.enabled` cannot change after creation.
+
+See [`examples/system-edge.yaml`](../examples/system-edge.yaml).
 
 ### Exposure
 

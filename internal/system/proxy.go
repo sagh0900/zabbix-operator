@@ -18,6 +18,7 @@ package system
 
 import (
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -84,8 +85,13 @@ func ProxyPod(in Input, p *zabbixv1alpha1.ProxySpec, name string) *corev1.Pod {
 	return pod
 }
 
-// serverAddress is how components reach the active server: the role-selected Service.
+// serverAddress is how components reach the active server: the role-selected Service, or
+// for an edge system the remote server's nodes separated by semicolons, the Zabbix syntax
+// for the nodes of one HA cluster.
 func serverAddress(sys *zabbixv1alpha1.ZabbixSystem) string {
+	if !sys.Spec.Server.IsEnabled() {
+		return strings.Join(sys.Spec.Server.RemoteAddresses, ";")
+	}
 	port := sys.Spec.Server.Service.Port
 	if port == 0 {
 		port = TrapperPort

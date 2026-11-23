@@ -1,0 +1,37 @@
+# An edge system: no server, frontend, web service or database in this cluster. A proxy and
+# the node agents report to a Zabbix server that runs elsewhere, and the proxy registers
+# itself in that server's frontend.
+#
+# Agents send active checks to the in-cluster proxy (agent.reportTo); in Zabbix, monitor the
+# node hosts by that proxy. Without reportTo they send to the remote server directly.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSystem
+metadata:
+  name: zabbix-edge
+  namespace: zabbix
+spec:
+  version: "8.0.0"
+  server:
+    enabled: false
+    remoteAddresses:           # host or host:port; several entries are the nodes of one HA cluster
+      - 10.11.135.132:10051
+  web:
+    enabled: false
+  webService:
+    enabled: false
+  proxies:
+    - name: ccs-dev-proxy      # instances register as ccs-dev-proxy-0, ...; keep names unique across systems
+      mode: active
+  agent:
+    enabled: true
+    image: zabbix/zabbix-agent2:ubuntu-8.0.0
+    reportTo: ccs-dev-proxy
+    tolerations:
+      - operator: Exists
+  proxyRegistration:
+    enabled: true
+    url: https://zabbix.example.com/api_jsonrpc.php   # the remote frontend's API
+    apiTokenSecretRef:
+      name: zabbix-api-token
+      key: token
+    prune: true
