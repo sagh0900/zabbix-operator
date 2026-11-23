@@ -133,6 +133,12 @@ spec:
 To pull every image from a mirror, set `spec.imageRepository` (for example
 `registry.example.com/zabbix`) instead.
 
+Image changes made in the same edit as `spec.version` (a new `imageRepository`,
+`imageFlavor` or image override) reach each component when it moves to the new version.
+Until then, a component that is still waiting keeps the full image it runs, so switching
+from a mirror to Docker Hub during an upgrade never asks for the old version under the new
+registry.
+
 ## Supported versions
 
 The operator runs the release lines built into it, each with the PostgreSQL range of its

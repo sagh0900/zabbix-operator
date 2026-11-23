@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -363,12 +364,33 @@ func TestDisruptionBudget(t *testing.T) {
 	h := newHarness(t)
 	h.reconcile(h.set("a", "zabbix-server-0", "zabbix-server-1"))
 	pdb := &policyv1.PodDisruptionBudget{}
-	if err := h.c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "zabbix-server"}, pdb); err != nil {
+	get := func() {
+		t.Helper()
+		if err := h.c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "zabbix-server"}, pdb); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A whole number: the owner of bare pods has no scale subresource, so Kubernetes
+	// cannot enforce maxUnavailable or a percentage.
+	expect := func(minAvailable int) {
+		t.Helper()
+		get()
+		if m := pdb.Spec.MinAvailable; m == nil || m.Type != intstr.Int || m.IntValue() != minAvailable || pdb.Spec.MaxUnavailable != nil {
+			t.Errorf("budget spec = %+v, want minAvailable %d", pdb.Spec, minAvailable)
+		}
+	}
+	expect(1)
+
+	// A budget written by an earlier operator version is converted.
+	one := intstr.FromInt32(1)
+	pdb.Spec.MinAvailable, pdb.Spec.MaxUnavailable = nil, &one
+	if err := h.c.Update(context.Background(), pdb); err != nil {
 		t.Fatal(err)
 	}
-	if pdb.Spec.MaxUnavailable == nil || pdb.Spec.MaxUnavailable.IntValue() != 1 || pdb.Spec.MinAvailable != nil {
-		t.Errorf("budget spec = %+v", pdb.Spec)
-	}
+	h.reconcile(h.set("a", "zabbix-server-0", "zabbix-server-1", "zabbix-server-2"))
+	expect(2)
+	h.reconcile(h.set("a", "zabbix-server-0"))
+	expect(0)
 	if ref := metav1.GetControllerOf(pdb); ref == nil || ref.UID != h.owner.UID {
 		t.Errorf("budget owner = %+v", ref)
 	}

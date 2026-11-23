@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -399,6 +400,7 @@ func (r *SystemReconciler) converge(ctx context.Context, sys *zabbixv1alpha1.Zab
 		return 0, false, err
 	}
 	in := r.input(ctx, sys, db, serverVersion, system.ServerSettings(sys), true)
+	in.Image = heldImage(sys, serverVersion, pods)
 	var members []podset.Member
 	for i := 0; i < int(sys.Spec.ServerReplicas()); i++ {
 		name := system.PodName(sys, system.Server, i)
@@ -483,6 +485,13 @@ func (r *SystemReconciler) statelessSet(ctx context.Context, sys *zabbixv1alpha1
 	var members []podset.Member
 	if enabled {
 		in := r.input(ctx, sys, db, version, settings, usesDB)
+		if version != sys.Spec.Version {
+			pods, err := r.componentPods(ctx, sys, component)
+			if err != nil {
+				return podset.Status{}, err
+			}
+			in.Image = heldImage(sys, version, pods)
+		}
 		for i := 0; i < int(replicas); i++ {
 			members = append(members, podset.Member{Template: build(in, system.PodName(sys, component, i))})
 		}
@@ -638,6 +647,27 @@ func (r *SystemReconciler) precheckArgs(ctx context.Context, target zabbix.Versi
 	line, _ := r.Compatibility.Get(ctx).Lookup(target)
 	return []string{"--target-version=" + target.String(),
 		fmt.Sprintf("--min-postgres=%d", line.MinPostgres), fmt.Sprintf("--max-postgres=%d", line.MaxPostgres)}
+}
+
+// heldImage is the image a component keeps while it waits at version for an upgrade:
+// the main container image of its live pods, so a change of image repository, flavor or
+// image override made in the same edit as spec.version reaches the component only when it
+// moves to the new version. Empty when the component runs spec.version or has no live pod.
+func heldImage(sys *zabbixv1alpha1.ZabbixSystem, version string, pods map[string]*corev1.Pod) string {
+	if version == sys.Spec.Version {
+		return ""
+	}
+	names := make([]string, 0, len(pods))
+	for name, p := range pods {
+		if p.DeletionTimestamp == nil && len(p.Spec.Containers) > 0 && metav1.IsControlledBy(p, sys) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return pods[names[0]].Spec.Containers[0].Image
 }
 
 // input builds the builder input, hashing the versions of every referenced Secret and

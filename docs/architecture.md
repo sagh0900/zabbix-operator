@@ -230,8 +230,9 @@ DaemonSet does and reimplementing it adds risk without benefit.
   API and respects their PodDisruptionBudget (no `--force`), the cluster autoscaler can
   remove nodes running them, Pod events reach the operator immediately, deleting the
   ZabbixSystem removes them, and no other controller can claim them.
-- Each component has a PodDisruptionBudget allowing one voluntary disruption at a time, so a
-  node drain never takes a whole component down. Evicted or lost Pods are recreated on
+- Each component has a PodDisruptionBudget allowing one voluntary disruption at a time
+  (`minAvailable` = pods − 1, a whole number Kubernetes can enforce on Pods without a
+  scalable controller), so a node drain never takes a whole component down. Evicted or lost Pods are recreated on
   another eligible node.
 - Server, web and web service Pods get a soft anti-affinity across nodes by default, so
   replicas spread when the cluster allows it; `affinity` overrides it.

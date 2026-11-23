@@ -89,6 +89,10 @@ type Input struct {
 	Version string
 	// ConfigHash summarises the referenced Secrets and ConfigMaps of the component.
 	ConfigHash string
+	// Image, when set, replaces the main container image. A component waiting for an
+	// upgrade keeps the full image it runs, so a registry, flavor or image change made in
+	// the same edit as the version only reaches it when it moves to the new version.
+	Image string
 }
 
 // image returns the official image of a component for version, unless overridden.
@@ -205,6 +209,9 @@ func tlsVolumes(db *zabbixv1alpha1.ZabbixDatabase) ([]corev1.Volume, []corev1.Vo
 func podFrom(in Input, component, name string, main corev1.Container, s *zabbixv1alpha1.PodSettings,
 	extraVolumes []corev1.Volume, podSec *corev1.PodSecurityContext) *corev1.Pod {
 	sys := in.System
+	if in.Image != "" {
+		main.Image = in.Image
+	}
 	main.Env = envmerge.Merge(main.Env, s.Env, operatorManagedKeys)
 	main.EnvFrom = append(main.EnvFrom, s.EnvFrom...)
 	main.VolumeMounts = append(main.VolumeMounts, s.VolumeMounts...)
