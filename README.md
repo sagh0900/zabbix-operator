@@ -16,7 +16,7 @@ Why it exists: [sagh0900.github.io/zabbix-operator](https://sagh0900.github.io/z
 Requires CloudNativePG.
 
 ```sh
-VERSION=v0.2.0
+VERSION=v0.2.1
 kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/$VERSION/install.yaml
 kubectl apply -f examples/database.yaml      # a CNPG cluster and its ZabbixDatabase
 kubectl apply -f examples/system.yaml        # Zabbix: two HA servers, frontend, web service
