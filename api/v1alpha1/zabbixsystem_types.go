@@ -61,8 +61,17 @@ const (
 )
 
 // ZabbixSystemSpec describes one Zabbix installation: server, frontend, web service,
-// proxies and agents, on the database referenced by DatabaseRef.
-// +kubebuilder:validation:XValidation:rule="self.databaseRef == oldSelf.databaseRef",message="spec.databaseRef is immutable"
+// proxies and agents, on the database referenced by DatabaseRef. With spec.server.enabled
+// false it is an edge system: proxies and agents only, reporting to a Zabbix server that
+// runs elsewhere.
+// +kubebuilder:validation:XValidation:rule="has(self.databaseRef) == has(oldSelf.databaseRef) && (!has(self.databaseRef) || self.databaseRef == oldSelf.databaseRef)",message="spec.databaseRef is immutable"
+// +kubebuilder:validation:XValidation:rule="(!has(self.server.enabled) || self.server.enabled) == (!has(oldSelf.server.enabled) || oldSelf.server.enabled)",message="spec.server.enabled is immutable"
+// +kubebuilder:validation:XValidation:rule="(has(self.server.enabled) && !self.server.enabled) || has(self.databaseRef)",message="spec.databaseRef is required when the server runs in the cluster"
+// +kubebuilder:validation:XValidation:rule="(has(self.server.enabled) && !self.server.enabled) == (has(self.server.remoteAddresses) && size(self.server.remoteAddresses) > 0)",message="spec.server.remoteAddresses is required when spec.server.enabled is false, and only then"
+// +kubebuilder:validation:XValidation:rule="!has(self.server.enabled) || self.server.enabled || ((has(self.web.enabled) && !self.web.enabled) && (has(self.webService.enabled) && !self.webService.enabled))",message="spec.web.enabled and spec.webService.enabled must be false when the server is remote"
+// +kubebuilder:validation:XValidation:rule="!has(self.server.enabled) || self.server.enabled || !has(self.proxies) || self.proxies.all(p, !has(p.mode) || p.mode == 'active')",message="proxies must be active when the server is remote: the remote server cannot reach passive proxies inside the cluster"
+// +kubebuilder:validation:XValidation:rule="!has(self.server.enabled) || self.server.enabled || !has(self.proxyRegistration.enabled) || !self.proxyRegistration.enabled || (has(self.proxyRegistration.url) && size(self.proxyRegistration.url) > 0)",message="spec.proxyRegistration.url (the remote frontend's API) is required when the server is remote"
+// +kubebuilder:validation:XValidation:rule="!has(self.agent.reportTo) || size(self.agent.reportTo) == 0 || (has(self.proxies) && self.proxies.exists(p, p.name == self.agent.reportTo))",message="spec.agent.reportTo must name a proxy in spec.proxies"
 type ZabbixSystemSpec struct {
 	// Version of Zabbix for server, frontend, web service and proxies, for example 7.0.25
 	// or 8.0.0rc1. A release line this operator version does not support, or a version
@@ -72,8 +81,10 @@ type ZabbixSystemSpec struct {
 	// +kubebuilder:validation:Pattern=`^[1-9][0-9]?\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]*)((alpha|beta|rc)[1-9][0-9]*)?$`
 	Version string `json:"version"`
 
-	// DatabaseRef names the ZabbixDatabase in the same namespace.
-	DatabaseRef LocalObjectReference `json:"databaseRef"`
+	// DatabaseRef names the ZabbixDatabase in the same namespace. Required unless the
+	// server is remote (spec.server.enabled false).
+	// +optional
+	DatabaseRef *LocalObjectReference `json:"databaseRef,omitempty"`
 
 	// Suspend stops every Zabbix pod in a safe order and keeps them stopped: frontend and
 	// web service, proxies and agents, standby servers, then the active server. Services,
@@ -153,6 +164,23 @@ type UpgradeSettings struct {
 // ServerSpec configures the Zabbix server.
 type ServerSpec struct {
 	PodSettings `json:",inline"`
+
+	// Enabled runs the server, and with it the database schema and upgrades, in this
+	// cluster. False makes an edge system: no server, frontend or web service; proxies and
+	// agents report to the server at RemoteAddresses. Fixed at creation.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// RemoteAddresses of the Zabbix server an edge system reports to, as host or
+	// host:port (port 10051 by default). Several addresses are the nodes of one HA cluster.
+	// Required when Enabled is false.
+	// +kubebuilder:validation:MaxItems=9
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:Pattern=`^[A-Za-z0-9]([-A-Za-z0-9.]*[A-Za-z0-9])?(:[0-9]{1,5})?$`
+	// +listType=atomic
+	// +optional
+	RemoteAddresses []string `json:"remoteAddresses,omitempty"`
 
 	// Replicas is the number of HA nodes. One is active; the others are standby.
 	// +kubebuilder:validation:Minimum=1
@@ -276,6 +304,13 @@ type AgentSpec struct {
 	// Enabled runs the agent.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
+
+	// ReportTo names a proxy in spec.proxies that receives the agents' active checks
+	// instead of the server, for example on an edge system whose remote server cannot be
+	// reached from the nodes. Hosts must then be monitored by that proxy in Zabbix.
+	// +kubebuilder:validation:MaxLength=50
+	// +optional
+	ReportTo string `json:"reportTo,omitempty"`
 }
 
 // ProxyRegistrationSpec keeps proxies registered in Zabbix through its API.
@@ -410,6 +445,9 @@ type ZabbixSystemList struct {
 func init() {
 	knownTypes = append(knownTypes, &ZabbixSystem{}, &ZabbixSystemList{})
 }
+
+// IsEnabled reports whether the server runs in the cluster; false means it is remote.
+func (s *ServerSpec) IsEnabled() bool { return s.Enabled == nil || *s.Enabled }
 
 // IsEnabled reports whether the frontend runs.
 func (w *WebSpec) IsEnabled() bool { return w.Enabled == nil || *w.Enabled }

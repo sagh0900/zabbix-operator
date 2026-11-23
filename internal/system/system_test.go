@@ -428,3 +428,83 @@ func TestPodsDoNotMatchCommonDeploymentSelectors(t *testing.T) {
 		}
 	}
 }
+
+// edgeFixture is a system whose server runs elsewhere.
+func edgeFixture() Input {
+	in := fixture()
+	in.Database = nil
+	s := &in.System.Spec
+	s.Server = zabbixv1alpha1.ServerSpec{Enabled: ptr.To(false), RemoteAddresses: []string{"10.11.135.132", "zbx-2.example.com:10052"}}
+	s.Web.Enabled, s.WebService.Enabled = ptr.To(false), ptr.To(false)
+	s.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "edge", Replicas: 2}}
+	s.Agent = zabbixv1alpha1.AgentSpec{Enabled: true, PodSettings: zabbixv1alpha1.PodSettings{Image: "zabbix/zabbix-agent2:ubuntu-7.0.25"}}
+	return in
+}
+
+func agentEnv(sys *zabbixv1alpha1.ZabbixSystem) map[string]corev1.EnvVar {
+	ds := &appsv1.DaemonSet{}
+	ApplyAgent(sys, ds, "")
+	e := map[string]corev1.EnvVar{}
+	for _, v := range ds.Spec.Template.Spec.Containers[0].Env {
+		e[v.Name] = v
+	}
+	return e
+}
+
+func TestEdgeProxiesReportToTheRemoteServer(t *testing.T) {
+	in := edgeFixture()
+	p := &in.System.Spec.Proxies[0]
+	e := env(ProxyPod(in, p, ProxyPodName(p, 0)))
+	if e["ZBX_SERVER_HOST"].Value != "10.11.135.132;zbx-2.example.com:10052" || e["ZBX_PROXYMODE"].Value != "0" {
+		t.Errorf("edge proxy env %v", e)
+	}
+}
+
+func TestEdgeHasNoServerService(t *testing.T) {
+	in := edgeFixture()
+	services := Services(in.System)
+	names := make([]string, 0, len(services))
+	for _, s := range services {
+		names = append(names, ServiceObjectName(in.System, s))
+	}
+	if got := strings.Join(names, ","); got != "edge" {
+		t.Errorf("services %s", got)
+	}
+}
+
+func TestAgentActiveServers(t *testing.T) {
+	// Edge: the remote server's nodes; ZBX_SERVER_HOST is empty so the images add nothing
+	// to the passive list.
+	in := edgeFixture()
+	e := agentEnv(in.System)
+	if v, ok := e["ZBX_SERVER_HOST"]; !ok || v.Value != "" {
+		t.Errorf("ZBX_SERVER_HOST %+v present %v", v, ok)
+	}
+	if _, ok := e["ZBX_SERVER_PORT"]; ok {
+		t.Error("ZBX_SERVER_PORT must not be set when the active servers are explicit")
+	}
+	if e["ZBX_ACTIVESERVERS"].Value != "10.11.135.132;zbx-2.example.com:10052" || e["ZBX_PASSIVESERVERS"].Value != "0.0.0.0/0,::/0" {
+		t.Errorf("edge agent env %v", e)
+	}
+
+	// reportTo: every instance of the proxy, as one group.
+	in.System.Spec.Agent.ReportTo = "edge"
+	if got := agentEnv(in.System)["ZBX_ACTIVESERVERS"].Value; got != "edge-0.edge.ns.svc:10051;edge-1.edge.ns.svc:10051" {
+		t.Errorf("reportTo active servers %q", got)
+	}
+
+	// reportTo also works with a local server.
+	local := fixture()
+	local.System.Spec.Proxies = []zabbixv1alpha1.ProxySpec{{Name: "dc1"}}
+	local.System.Spec.Agent = zabbixv1alpha1.AgentSpec{Enabled: true, ReportTo: "dc1"}
+	if got := agentEnv(local.System)["ZBX_ACTIVESERVERS"].Value; got != "dc1-0.dc1.ns.svc:10051" {
+		t.Errorf("local reportTo %q", got)
+	}
+
+	// The user's environment cannot redirect the agents.
+	in.System.Spec.Agent.Env = []corev1.EnvVar{{Name: "ZBX_ACTIVESERVERS", Value: "x"}, {Name: "ZBX_ACTIVE_ALLOW", Value: "false"}}
+	e = agentEnv(in.System)
+	if e["ZBX_ACTIVESERVERS"].Value == "x" || e["ZBX_ACTIVE_ALLOW"].Value != "false" {
+		t.Errorf("managed keys %v", e)
+	}
+}

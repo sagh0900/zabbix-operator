@@ -60,7 +60,9 @@ spec:
           spec:
             description: |-
               ZabbixSystemSpec describes one Zabbix installation: server, frontend, web service,
-              proxies and agents, on the database referenced by DatabaseRef.
+              proxies and agents, on the database referenced by DatabaseRef. With spec.server.enabled
+              false it is an edge system: proxies and agents only, reporting to a Zabbix server that
+              runs elsewhere.
             properties:
               agent:
                 default: {}
@@ -339,6 +341,13 @@ spec:
                   priorityClassName:
                     description: PriorityClassName of the pods.
                     type: string
+                  reportTo:
+                    description: |-
+                      ReportTo names a proxy in spec.proxies that receives the agents' active checks
+                      instead of the server, for example on an edge system whose remote server cannot be
+                      reached from the nodes. Hosts must then be monitored by that proxy in Zabbix.
+                    maxLength: 50
+                    type: string
                   resources:
                     description: Resources of the main container.
                     properties:
@@ -539,7 +548,9 @@ spec:
                   rule: '!has(self.enabled) || !self.enabled || (has(self.image) &&
                     size(self.image) > 0)'
               databaseRef:
-                description: DatabaseRef names the ZabbixDatabase in the same namespace.
+                description: |-
+                  DatabaseRef names the ZabbixDatabase in the same namespace. Required unless the
+                  server is remote (spec.server.enabled false).
                 properties:
                   name:
                     minLength: 1
@@ -1185,6 +1196,13 @@ spec:
                     description: Affinity of the pods.
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled runs the server, and with it the database schema and upgrades, in this
+                      cluster. False makes an edge system: no server, frontend or web service; proxies and
+                      agents report to the server at RemoteAddresses. Fixed at creation.
+                    type: boolean
                   env:
                     description: |-
                       Env adds environment variables to the main container. Variables the operator
@@ -1451,6 +1469,18 @@ spec:
                   priorityClassName:
                     description: PriorityClassName of the pods.
                     type: string
+                  remoteAddresses:
+                    description: |-
+                      RemoteAddresses of the Zabbix server an edge system reports to, as host or
+                      host:port (port 10051 by default). Several addresses are the nodes of one HA cluster.
+                      Required when Enabled is false.
+                    items:
+                      maxLength: 253
+                      pattern: ^[A-Za-z0-9]([-A-Za-z0-9.]*[A-Za-z0-9])?(:[0-9]{1,5})?$
+                      type: string
+                    maxItems: 9
+                    type: array
+                    x-kubernetes-list-type: atomic
                   replicas:
                     default: 2
                     description: Replicas is the number of HA nodes. One is active;
@@ -2946,12 +2976,37 @@ spec:
                     type: array
                 type: object
             required:
-            - databaseRef
             - version
             type: object
             x-kubernetes-validations:
             - message: spec.databaseRef is immutable
-              rule: self.databaseRef == oldSelf.databaseRef
+              rule: has(self.databaseRef) == has(oldSelf.databaseRef) && (!has(self.databaseRef)
+                || self.databaseRef == oldSelf.databaseRef)
+            - message: spec.server.enabled is immutable
+              rule: (!has(self.server.enabled) || self.server.enabled) == (!has(oldSelf.server.enabled)
+                || oldSelf.server.enabled)
+            - message: spec.databaseRef is required when the server runs in the cluster
+              rule: (has(self.server.enabled) && !self.server.enabled) || has(self.databaseRef)
+            - message: spec.server.remoteAddresses is required when spec.server.enabled
+                is false, and only then
+              rule: (has(self.server.enabled) && !self.server.enabled) == (has(self.server.remoteAddresses)
+                && size(self.server.remoteAddresses) > 0)
+            - message: spec.web.enabled and spec.webService.enabled must be false
+                when the server is remote
+              rule: '!has(self.server.enabled) || self.server.enabled || ((has(self.web.enabled)
+                && !self.web.enabled) && (has(self.webService.enabled) && !self.webService.enabled))'
+            - message: 'proxies must be active when the server is remote: the remote
+                server cannot reach passive proxies inside the cluster'
+              rule: '!has(self.server.enabled) || self.server.enabled || !has(self.proxies)
+                || self.proxies.all(p, !has(p.mode) || p.mode == ''active'')'
+            - message: spec.proxyRegistration.url (the remote frontend's API) is required
+                when the server is remote
+              rule: '!has(self.server.enabled) || self.server.enabled || !has(self.proxyRegistration.enabled)
+                || !self.proxyRegistration.enabled || (has(self.proxyRegistration.url)
+                && size(self.proxyRegistration.url) > 0)'
+            - message: spec.agent.reportTo must name a proxy in spec.proxies
+              rule: '!has(self.agent.reportTo) || size(self.agent.reportTo) == 0 ||
+                (has(self.proxies) && self.proxies.exists(p, p.name == self.agent.reportTo))'
           status:
             description: ZabbixSystemStatus reports the observed state of a ZabbixSystem.
             properties:

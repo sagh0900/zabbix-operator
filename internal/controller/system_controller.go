@@ -200,6 +200,9 @@ func (r *SystemReconciler) reconcileSystem(ctx context.Context, sys *zabbixv1alp
 	if sys.Status.Phase == zabbixv1alpha1.PhaseSuspended {
 		r.event(sys, corev1.EventTypeNormal, "Resuming", "Starting all Zabbix pods")
 	}
+	if !sys.Spec.Server.IsEnabled() {
+		return r.reconcileEdgeSystem(ctx, sys, obs)
+	}
 	db := &zabbixv1alpha1.ZabbixDatabase{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: sys.Namespace, Name: sys.Spec.DatabaseRef.Name}, db); err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -587,8 +590,14 @@ func (r *SystemReconciler) recordMetrics(sys *zabbixv1alpha1.ZabbixSystem, obs *
 		upgrading = 1
 	}
 	metrics.UpgradeInProgress.WithLabelValues(ns, name).Set(upgrading)
-	metrics.ServerActiveNodes.WithLabelValues(ns, name).Set(float64(obs.activeN))
-	metrics.ServerFailovers.WithLabelValues(ns, name)
+	if sys.Spec.Server.IsEnabled() {
+		metrics.ServerActiveNodes.WithLabelValues(ns, name).Set(float64(obs.activeN))
+		metrics.ServerFailovers.WithLabelValues(ns, name)
+	} else {
+		// An edge system has no server of its own; no series keeps the server alerts quiet.
+		metrics.ServerActiveNodes.DeleteLabelValues(ns, name)
+		metrics.ServerFailovers.DeleteLabelValues(ns, name)
+	}
 	for _, c := range obs.components {
 		metrics.ComponentPodsDesired.WithLabelValues(ns, name, c.Name).Set(float64(c.Desired))
 		metrics.ComponentPodsReady.WithLabelValues(ns, name, c.Name).Set(float64(c.Ready))
@@ -904,7 +913,10 @@ func (r *SystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 	idx := mgr.GetFieldIndexer()
 	if err := idx.IndexField(ctx, &zabbixv1alpha1.ZabbixSystem{}, indexSystemDatabase, func(o client.Object) []string {
-		return []string{o.(*zabbixv1alpha1.ZabbixSystem).Spec.DatabaseRef.Name}
+		if ref := o.(*zabbixv1alpha1.ZabbixSystem).Spec.DatabaseRef; ref != nil {
+			return []string{ref.Name}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}

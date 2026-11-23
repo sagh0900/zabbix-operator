@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,7 @@ import (
 	"github.com/sagh0900/zabbix-operator/internal/metrics"
 	"github.com/sagh0900/zabbix-operator/internal/podset"
 	"github.com/sagh0900/zabbix-operator/internal/system"
+	"github.com/sagh0900/zabbix-operator/internal/zabbix"
 )
 
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
@@ -134,4 +136,51 @@ func (r *SystemReconciler) reconcileAgent(ctx context.Context, sys *zabbixv1alph
 	metrics.AgentNodesDesired.WithLabelValues(sys.Namespace, sys.Name).Set(float64(desired))
 	metrics.AgentNodesReady.WithLabelValues(sys.Namespace, sys.Name).Set(float64(ready))
 	return nil
+}
+
+// reconcileEdgeSystem runs a system whose server is remote: proxies and agents only, with
+// no database, schema or server upgrade. Proxies move to a new version directly; whether
+// the remote server accepts it is up to the remote server's version.
+func (r *SystemReconciler) reconcileEdgeSystem(ctx context.Context, sys *zabbixv1alpha1.ZabbixSystem, obs *observation) (time.Duration, error) {
+	obs.webEnabled = false
+	target, err := zabbix.ParseVersion(sys.Spec.Version)
+	if err != nil {
+		obs.phase, obs.reason, obs.blocked = zabbixv1alpha1.PhaseBlocked, err.Error(), "InvalidVersion"
+		return 0, nil
+	}
+	if compat := r.Compatibility.Get(ctx); !supported(compat, target) {
+		obs.phase, obs.reason, obs.blocked = zabbixv1alpha1.PhaseBlocked, compat.UnsupportedMessage(target), "UnsupportedVersion"
+		return 0, nil
+	}
+
+	proxyAction, err := r.reconcileProxies(ctx, sys, nil, sys.Spec.Version, "", obs)
+	if err != nil {
+		return 0, err
+	}
+	if err := r.reconcileAgent(ctx, sys, obs); err != nil {
+		return 0, err
+	}
+	conflicts, err := r.reconcileNetwork(ctx, sys)
+	if err != nil {
+		return 0, err
+	}
+	obs.conflicts = append(obs.conflicts, conflicts...)
+	r.reconcileRegistration(ctx, sys, obs)
+
+	obs.running = sys.Spec.Version
+	obs.phase = zabbixv1alpha1.PhaseRunning
+	switch {
+	case len(obs.conflicts) > 0:
+		obs.phase, obs.reason = zabbixv1alpha1.PhaseDegraded, "Conflict: "+obs.conflicts[0]
+	case proxyAction != "":
+		obs.phase, obs.reason = zabbixv1alpha1.PhaseDegraded, proxyAction
+	default:
+		obs.reason = "Reporting to the remote server " + strings.Join(sys.Spec.Server.RemoteAddresses, ", ")
+	}
+	return activeCheckInterval, nil
+}
+
+func supported(c *zabbix.Compatibility, v zabbix.Version) bool {
+	_, ok := c.Lookup(v)
+	return ok
 }

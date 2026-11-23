@@ -18,6 +18,7 @@ package system
 
 import (
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,22 +44,31 @@ var agentManagedKeys = []string{envHostname, envServerHost, envServerPort, "ZBX_
 
 // ApplyAgent writes the desired agent DaemonSet into ds. The agent runs in the node's
 // network and process namespaces so it monitors the node itself, and uses the node name as
-// its host name. It sends active checks to the role-selected server Service; passive checks
-// are accepted from the server pods, whose IPs change.
+// its host name. It sends active checks to the role-selected server Service, the remote
+// server of an edge system, or the proxy named in spec.agent.reportTo; passive checks are
+// accepted from any address, since the server and proxy pods change IPs.
 func ApplyAgent(sys *zabbixv1alpha1.ZabbixSystem, ds *appsv1.DaemonSet, configHash string) {
 	s := &sys.Spec.Agent.PodSettings
-	port := sys.Spec.Server.Service.Port
-	if port == 0 {
-		port = TrapperPort
+	env := []corev1.EnvVar{{Name: envHostname, ValueFrom: fieldRef("spec.nodeName")}}
+	if active := agentActiveServers(sys); active != "" {
+		// The images prepend ZBX_SERVER_HOST to both server lists unless it is empty, and the
+		// passive list (Server=) takes no ports or HA groups.
+		env = append(env,
+			corev1.EnvVar{Name: envServerHost, Value: ""},
+			corev1.EnvVar{Name: "ZBX_ACTIVESERVERS", Value: active})
+	} else {
+		port := sys.Spec.Server.Service.Port
+		if port == 0 {
+			port = TrapperPort
+		}
+		env = append(env,
+			corev1.EnvVar{Name: envServerHost, Value: ServiceName(sys, Server)},
+			corev1.EnvVar{Name: envServerPort, Value: fmt.Sprint(port)})
 	}
-	env := []corev1.EnvVar{
-		{Name: envHostname, ValueFrom: fieldRef("spec.nodeName")},
-		{Name: envServerHost, Value: ServiceName(sys, Server)},
-		{Name: envServerPort, Value: fmt.Sprint(port)},
-		{Name: "ZBX_PASSIVESERVERS", Value: anyAddress},
-		{Name: "ZBX_PASSIVE_ALLOW", Value: envTrue},
-		{Name: "ZBX_ACTIVE_ALLOW", Value: envTrue},
-	}
+	env = append(env,
+		corev1.EnvVar{Name: "ZBX_PASSIVESERVERS", Value: anyAddress},
+		corev1.EnvVar{Name: "ZBX_PASSIVE_ALLOW", Value: envTrue},
+		corev1.EnvVar{Name: "ZBX_ACTIVE_ALLOW", Value: envTrue})
 	if sys.Spec.Timezone != "" {
 		env = append(env, corev1.EnvVar{Name: "TZ", Value: sys.Spec.Timezone})
 	}
@@ -116,4 +126,28 @@ func ApplyAgent(sys *zabbixv1alpha1.ZabbixSystem, ds *appsv1.DaemonSet, configHa
 			SecurityContext:    s.PodSecurityContext,
 		},
 	}
+}
+
+// agentActiveServers is the agents' ServerActive list when it is not the in-cluster server
+// Service: every instance of the proxy named in spec.agent.reportTo, or the remote server's
+// nodes. Semicolons separate the members of one HA cluster or proxy group.
+func agentActiveServers(sys *zabbixv1alpha1.ZabbixSystem) string {
+	if name := sys.Spec.Agent.ReportTo; name != "" {
+		for i := range sys.Spec.Proxies {
+			p := &sys.Spec.Proxies[i]
+			if p.Name != name {
+				continue
+			}
+			replicas := max(int(p.Replicas), 1)
+			addrs := make([]string, 0, replicas)
+			for j := 0; j < replicas; j++ {
+				addrs = append(addrs, fmt.Sprintf("%s:%d", ProxyAddress(sys, p, j), TrapperPort))
+			}
+			return strings.Join(addrs, ";")
+		}
+	}
+	if !sys.Spec.Server.IsEnabled() {
+		return serverAddress(sys)
+	}
+	return ""
 }

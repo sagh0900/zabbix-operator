@@ -6,7 +6,8 @@ through its `runbook_url` annotation.
 ## ZabbixSystemRunning
 
 Informational heartbeat, one per ZabbixSystem: fires while the system is Running and its
-`ha-gc` check, which runs every 5 minutes, succeeded within the last 10 minutes. Route it to
+`ha-gc` check, which runs every 5 minutes, succeeded within the last 10 minutes. An edge
+system (remote server) has no `ha-gc`; its heartbeat follows the Running phase alone. Route it to
 a dead man's switch or heartbeat receiver with `repeat_interval: 5m`, so a notification
 arrives after every `ha-gc` cycle:
 
