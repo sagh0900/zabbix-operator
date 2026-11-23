@@ -23,7 +23,7 @@ Each release publishes `install.yaml` (CRDs, RBAC, the operator Deployment and i
 Service, in the namespace `zabbix-operator`):
 
 ```sh
-VERSION=v0.1.0
+VERSION=v0.1.1
 kubectl apply -f https://github.com/sagh0900/zabbix-operator/releases/download/$VERSION/install.yaml
 kubectl -n zabbix-operator rollout status deployment/zabbix-operator-controller-manager
 ```
@@ -39,11 +39,11 @@ the `config/default` base and set the image:
 ```yaml
 # kustomization.yaml
 resources:
-  - https://github.com/sagh0900/zabbix-operator//config/default?ref=v0.1.0
+  - https://github.com/sagh0900/zabbix-operator//config/default?ref=v0.1.1
 images:
   - name: manager
     newName: ghcr.io/sagh0900/zabbix-operator
-    newTag: v0.1.0
+    newTag: v0.1.1
 ```
 
 The operator image also runs the operator's database Jobs; the base keeps the two in sync.
